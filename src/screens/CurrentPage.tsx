@@ -9,6 +9,7 @@ import {
   Send,
   Star,
   Trophy,
+  Trash2,
 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -40,6 +41,7 @@ type Props = {
   userId: string | null;
   onCreateSession: (title: string) => Promise<boolean>;
   onAddOption: (title: string, details: string) => Promise<boolean>;
+  onRemoveOption: (optionId: string) => Promise<boolean>;
   onUpdateSessionPhase: (phase: SessionPhase) => Promise<boolean>;
   onSubmitRanking: (orderedOptionIds: string[]) => Promise<boolean>;
   onSubmitSessionRating: (rating: number) => Promise<boolean>;
@@ -75,6 +77,7 @@ export function CurrentPage({
   userId,
   onCreateSession,
   onAddOption,
+  onRemoveOption,
   onUpdateSessionPhase,
   onSubmitRanking,
   onSubmitSessionRating,
@@ -456,6 +459,13 @@ export function CurrentPage({
                         </Text>
                       ) : null}
                     </View>
+                    <Pressable
+                      className="ml-[8px] h-9 w-9 items-center justify-center rounded-[9px] bg-[#FEEFF0]"
+                      onPress={() => void onRemoveOption(option.id)}
+                      hitSlop={6}
+                    >
+                      <Trash2 size={16} color="#B42318" strokeWidth={2.4} />
+                    </Pressable>
                   </View>
                 );
               })

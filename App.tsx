@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { SafeAreaView, useWindowDimensions, View } from 'react-native';
+import { useWindowDimensions, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBar } from './src/components/BottomTabBar';
 import { usePollData } from './src/hooks/usePollData';
 import { CurrentPage } from './src/screens/CurrentPage';
@@ -11,16 +12,28 @@ import type { Tab } from './src/types/poll';
 import './global.css';
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
+  );
+}
+
+function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>('current');
   const poll = usePollData();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     void poll.refresh();
-  }, [poll.refresh]);
+    // Initial load only; depending on poll.refresh causes re-fetch loops
+    // because refresh callback identity changes with hook state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
-    <SafeAreaView className="flex-1 bg-white" style={{ width }}>
+    <SafeAreaView className="flex-1 bg-white" style={{ width }} edges={['top', 'left', 'right']}>
       <StatusBar style="light" />
       <View className="flex-1 bg-white" style={{ width }}>
         {activeTab === 'current' ? (
@@ -36,6 +49,7 @@ export default function App() {
             userId={poll.userId}
             onCreateSession={(title) => poll.createSession({ title })}
             onAddOption={(title, details) => poll.addOption({ title, details })}
+            onRemoveOption={poll.removeOption}
             onUpdateSessionPhase={poll.updateSessionPhase}
             onSubmitRanking={poll.submitRanking}
             onSubmitSessionRating={poll.submitSessionRating}
@@ -66,7 +80,7 @@ export default function App() {
           />
         ) : null}
 
-        <BottomTabBar activeTab={activeTab} onChange={setActiveTab} />
+        <BottomTabBar activeTab={activeTab} onChange={setActiveTab} bottomInset={insets.bottom} />
       </View>
     </SafeAreaView>
   );

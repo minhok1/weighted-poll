@@ -44,6 +44,7 @@ type UsePollDataResult = {
   selectActiveGroup: (groupId: string) => void;
   createSession: (input: CreateSessionInput) => Promise<boolean>;
   addOption: (input: AddOptionInput) => Promise<boolean>;
+  removeOption: (optionId: string) => Promise<boolean>;
   updateSessionPhase: (phase: SessionPhase) => Promise<boolean>;
   submitRanking: (orderedOptionIds: string[]) => Promise<boolean>;
   submitSessionRating: (rating: number) => Promise<boolean>;
@@ -670,6 +671,39 @@ export function usePollData(): UsePollDataResult {
     [currentSession, refresh, userId]
   );
 
+  const removeOption = useCallback(
+    async (optionId: string) => {
+      setErrorScope('current');
+      if (!supabase || !currentSession) {
+        setError('No active session.');
+        return false;
+      }
+      if (!userId) {
+        setError('Please log in before removing books.');
+        return false;
+      }
+      if (!optionId.trim()) {
+        setError('Invalid book.');
+        return false;
+      }
+
+      const result = await supabase
+        .from('session_options')
+        .delete()
+        .eq('id', optionId)
+        .eq('session_id', currentSession.id);
+
+      if (result.error) {
+        setError(result.error.message);
+        return false;
+      }
+
+      await refresh();
+      return true;
+    },
+    [currentSession, refresh, userId]
+  );
+
   const updateSessionPhase = useCallback(
     async (phase: SessionPhase) => {
       setErrorScope('current');
@@ -865,6 +899,7 @@ export function usePollData(): UsePollDataResult {
     selectActiveGroup,
     createSession,
     addOption,
+    removeOption,
     updateSessionPhase,
     submitRanking,
     submitSessionRating,

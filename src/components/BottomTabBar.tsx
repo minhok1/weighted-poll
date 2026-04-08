@@ -5,11 +5,15 @@ import type { Tab } from '../types/poll';
 type Props = {
   activeTab: Tab;
   onChange: (tab: Tab) => void;
+  bottomInset?: number;
 };
 
-export function BottomTabBar({ activeTab, onChange }: Props) {
+export function BottomTabBar({ activeTab, onChange, bottomInset = 0 }: Props) {
   return (
-    <View className="h-[74px] w-full self-stretch flex-row items-center justify-between border-t border-[#EEF1F5] bg-white px-[10px]">
+    <View
+      className="w-full self-stretch flex-row items-center justify-between border-t border-[#EEF1F5] bg-white px-[10px]"
+      style={{ height: 74 + bottomInset, paddingBottom: bottomInset }}
+    >
       <TabButton
         label="Current"
         icon={<BookOpen size={22} color={activeTab === 'current' ? '#2E9A98' : '#63718B'} strokeWidth={2.2} />}
@@ -54,6 +58,8 @@ function TabButton({ label, icon, isActive, onPress }: TabButtonProps) {
     <Pressable
       className={`h-[54px] flex-1 items-center justify-center rounded-xl ${isActive ? 'bg-[#EDFFF8]' : ''}`}
       onPress={onPress}
+      hitSlop={8}
+      pressRetentionOffset={16}
     >
       {icon}
       <Text className={`text-sm font-semibold ${isActive ? 'text-[#2E9A98]' : 'text-[#63718B]'}`}>{label}</Text>
