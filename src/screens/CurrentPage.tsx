@@ -105,11 +105,16 @@ export function CurrentPage({
 
   const currentUserSubmission = useMemo(() => {
     if (!userId) return null;
-    return submissions.find((submission) => submission.user_id === userId) ?? null;
+    return (
+      submissions.find((submission) => submission.user_id === userId) ?? null
+    );
   }, [submissions, userId]);
 
   const currentUserRankingOrder = useMemo(() => {
-    if (!currentUserSubmission || !Array.isArray(currentUserSubmission.ranking)) {
+    if (
+      !currentUserSubmission ||
+      !Array.isArray(currentUserSubmission.ranking)
+    ) {
       return [];
     }
     const entries = [...(currentUserSubmission.ranking as RankingEntry[])].sort(
@@ -120,7 +125,9 @@ export function CurrentPage({
     const fromSubmission = entries
       .map((entry) => entry.option_id)
       .filter((optionId): optionId is string => optionIdSet.has(optionId));
-    const missing = optionIds.filter((optionId) => !fromSubmission.includes(optionId));
+    const missing = optionIds.filter(
+      (optionId) => !fromSubmission.includes(optionId),
+    );
     return [...fromSubmission, ...missing];
   }, [currentUserSubmission, options]);
 
@@ -141,14 +148,24 @@ export function CurrentPage({
   }, [currentSession?.phase, sessionRatings, userId]);
 
   useEffect(() => {
-    if (currentSession?.phase === "voting" && userHasSubmitted && isEditingSubmission) {
+    if (
+      currentSession?.phase === "voting" &&
+      userHasSubmitted &&
+      isEditingSubmission
+    ) {
       setRankingOrder(
         currentUserRankingOrder.length > 0
           ? currentUserRankingOrder
           : options.map((option) => option.id),
       );
     }
-  }, [currentSession?.phase, currentUserRankingOrder, isEditingSubmission, options, userHasSubmitted]);
+  }, [
+    currentSession?.phase,
+    currentUserRankingOrder,
+    isEditingSubmission,
+    options,
+    userHasSubmitted,
+  ]);
 
   const ratingEntries = useMemo(
     () =>
@@ -243,7 +260,10 @@ export function CurrentPage({
           key?: string;
           title?: string;
           author_name?: string[];
-          first_sentence?: string | { value?: string } | Array<string | { value?: string }>;
+          first_sentence?:
+            | string
+            | { value?: string }
+            | Array<string | { value?: string }>;
           subject?: string[];
           cover_i?: number;
         }>;
@@ -304,7 +324,9 @@ export function CurrentPage({
         className="flex-1 w-full"
         contentContainerClassName="w-full px-[14px] pb-[22px] pt-[14px]"
       >
-        {error ? <Text className="mb-[10px] text-[13px] text-[#9F1D1D]">{error}</Text> : null}
+        {error ? (
+          <Text className="mb-[10px] text-[13px] text-[#9F1D1D]">{error}</Text>
+        ) : null}
 
         {!currentSession ? (
           <View className="mb-[14px] rounded-[14px] border border-[#E7ECF2] bg-white p-[14px]">
@@ -549,7 +571,9 @@ export function CurrentPage({
               Waiting for other members to submit their rankings.
             </Text>
             <View className="mt-6 w-[86%] flex-row items-center justify-between">
-              <Text className="text-[17px] text-[#4C5870]">Submissions received</Text>
+              <Text className="text-[17px] text-[#4C5870]">
+                Submissions received
+              </Text>
               <Text className="text-[17px] font-bold text-[#111D35]">
                 {submissions.length}
               </Text>
@@ -558,7 +582,9 @@ export function CurrentPage({
               className="mt-4 h-10 rounded-[10px] bg-[#ECEEF3] px-4 items-center justify-center"
               onPress={() => setIsEditingSubmission(true)}
             >
-              <Text className="text-[13px] font-bold text-[#273655]">Edit my submission</Text>
+              <Text className="text-[13px] font-bold text-[#273655]">
+                Edit my submission
+              </Text>
             </Pressable>
           </View>
         ) : null}
@@ -608,7 +634,9 @@ export function CurrentPage({
             )}
             {userId ? (
               <View className="mb-3 rounded-[14px] border border-[#E7ECF2] bg-white p-[12px]">
-                <Text className="text-[16px] font-bold text-[#111D35]">Your rating</Text>
+                <Text className="text-[16px] font-bold text-[#111D35]">
+                  Your rating
+                </Text>
                 <Text className="mt-[2px] text-[13px] text-[#5B6780]">
                   Tap left/right half of each star for 0.5 increments.
                 </Text>
@@ -622,7 +650,12 @@ export function CurrentPage({
                           className="absolute left-0 top-0 h-7 overflow-hidden"
                           style={{ width: 24 * fill }}
                         >
-                          <Star size={24} color="#F4C542" fill="#F4C542" strokeWidth={2.2} />
+                          <Star
+                            size={24}
+                            color="#F4C542"
+                            fill="#F4C542"
+                            strokeWidth={2.2}
+                          />
                         </View>
                         <View className="absolute inset-0 flex-row">
                           <Pressable
@@ -637,7 +670,9 @@ export function CurrentPage({
                       </View>
                     );
                   })}
-                  <Text className="ml-1 text-[14px] font-bold text-[#4B5871]">{draftRating.toFixed(1)}</Text>
+                  <Text className="ml-1 text-[14px] font-bold text-[#4B5871]">
+                    {draftRating.toFixed(1)}
+                  </Text>
                 </View>
                 <Pressable
                   className={`mt-3 h-10 items-center justify-center rounded-[10px] ${
@@ -651,10 +686,14 @@ export function CurrentPage({
                   }}
                   disabled={draftRating <= 0}
                 >
-                  <Text className="text-[14px] font-bold text-white">Submit</Text>
+                  <Text className="text-[14px] font-bold text-white">
+                    Submit
+                  </Text>
                 </Pressable>
                 {ratingNotice ? (
-                  <Text className="mt-2 text-[13px] text-[#177245]">{ratingNotice}</Text>
+                  <Text className="mt-2 text-[13px] text-[#177245]">
+                    {ratingNotice}
+                  </Text>
                 ) : null}
               </View>
             ) : null}
@@ -682,7 +721,12 @@ export function CurrentPage({
                             className="absolute left-0 top-0 h-6 overflow-hidden"
                             style={{ width: 22 * fill }}
                           >
-                            <Star size={22} color="#F4C542" fill="#F4C542" strokeWidth={2.2} />
+                            <Star
+                              size={22}
+                              color="#F4C542"
+                              fill="#F4C542"
+                              strokeWidth={2.2}
+                            />
                           </View>
                         </View>
                       );
@@ -759,7 +803,7 @@ function starFill(rating: number, starNumber: number) {
   return 0;
 }
 
-function parseStoredBookDetails(
+function parseStoredBookDetails( //redeployed
   details: string | null,
 ): StoredBookDetails | null {
   if (!details) return null;
