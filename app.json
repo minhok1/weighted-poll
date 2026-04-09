@@ -26,7 +26,13 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single",
+      "name": "weighted-poll",
+      "shortName": "weighted-poll",
+      "themeColor": "#111D35",
+      "backgroundColor": "#ffffff"
     },
     "plugins": [
       "expo-font"
