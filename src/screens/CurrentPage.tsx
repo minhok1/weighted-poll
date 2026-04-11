@@ -17,13 +17,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
-  PanResponder,
   Pressable,
   ScrollView,
   Text,
   TextInput,
   View,
 } from "react-native";
+import DraggableFlatList, {
+  type RenderItemParams,
+} from "react-native-draggable-flatlist";
 import { PrimaryActionButton } from "../components/PrimaryActionButton";
 import { SessionHeader } from "../components/SessionHeader";
 import type {
@@ -71,8 +73,6 @@ type BookSearchResult = {
   coverUrl: string | null;
 };
 const BOOK_SEARCH_COOLDOWN_MS = 1200;
-const DRAG_STEP_PX = 32;
-const DRAG_HYSTERESIS_PX = 10;
 
 export function CurrentPage({
   loading,
@@ -122,24 +122,14 @@ export function CurrentPage({
   const [draftRating, setDraftRating] = useState<number>(0);
   const [ratingNotice, setRatingNotice] = useState<string | null>(null);
   const [isEditingSubmission, setIsEditingSubmission] = useState(false);
-  const [draggingOptionId, setDraggingOptionId] = useState<string | null>(null);
+  const [isRankingDragging, setIsRankingDragging] = useState(false);
   const [expandedVotingOptionIds, setExpandedVotingOptionIds] = useState<Record<string, boolean>>({});
   const bookSearchCacheRef = useRef<Map<string, BookSearchResult[]>>(new Map());
   const lastBookSearchAtRef = useRef<number>(0);
-  const rankingOrderRef = useRef<string[]>([]);
-  const dragOptionIdRef = useRef<string | null>(null);
-  const dragStartOrderRef = useRef<string[]>([]);
-  const dragStartIndexRef = useRef<number>(-1);
-  const dragTargetIndexRef = useRef<number>(-1);
-  const dragStartYRef = useRef<number>(0);
 
   useEffect(() => {
     setRankingOrder(options.map((option) => option.id));
   }, [options]);
-
-  useEffect(() => {
-    rankingOrderRef.current = rankingOrder;
-  }, [rankingOrder]);
 
   const userHasSubmitted = useMemo(() => {
     if (!userId) return false;
@@ -542,71 +532,6 @@ export function CurrentPage({
     });
   };
 
-  const resetDragState = () => {
-    dragOptionIdRef.current = null;
-    dragStartOrderRef.current = [];
-    dragStartIndexRef.current = -1;
-    dragTargetIndexRef.current = -1;
-    dragStartYRef.current = 0;
-    setDraggingOptionId(null);
-  };
-
-  const getHandlePanHandlers = (optionId: string) =>
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) =>
-        Math.abs(gestureState.dy) > 3,
-      onMoveShouldSetPanResponderCapture: (_, gestureState) =>
-        Math.abs(gestureState.dy) > 2,
-      onPanResponderGrant: () => {
-        const startOrder = rankingOrderRef.current;
-        const startIndex = startOrder.indexOf(optionId);
-        if (startIndex < 0) {
-          return;
-        }
-        dragOptionIdRef.current = optionId;
-        dragStartOrderRef.current = startOrder;
-        dragStartIndexRef.current = startIndex;
-        dragTargetIndexRef.current = startIndex;
-        dragStartYRef.current = 0;
-        setDraggingOptionId(optionId);
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (dragOptionIdRef.current !== optionId) return;
-        const startOrder = dragStartOrderRef.current;
-        const startIndex = dragStartIndexRef.current;
-        if (startOrder.length === 0 || startIndex < 0) return;
-
-        if (dragStartYRef.current === 0) {
-          dragStartYRef.current = gestureState.moveY;
-          return;
-        }
-
-        const rawDeltaY = gestureState.moveY - dragStartYRef.current;
-        const adjustedDeltaY =
-          rawDeltaY > 0
-            ? Math.max(0, rawDeltaY - DRAG_HYSTERESIS_PX)
-            : Math.min(0, rawDeltaY + DRAG_HYSTERESIS_PX);
-        const stepDelta = Math.trunc(adjustedDeltaY / DRAG_STEP_PX);
-        const nextTargetIndex = Math.max(
-          0,
-          Math.min(startOrder.length - 1, startIndex + stepDelta),
-        );
-        if (nextTargetIndex === dragTargetIndexRef.current) return;
-        dragTargetIndexRef.current = nextTargetIndex;
-
-        const nextOrder = [...startOrder];
-        nextOrder.splice(startIndex, 1);
-        nextOrder.splice(nextTargetIndex, 0, optionId);
-        setRankingOrder(nextOrder);
-      },
-      onPanResponderRelease: resetDragState,
-      onPanResponderTerminate: resetDragState,
-      onPanResponderTerminationRequest: () => false,
-      onShouldBlockNativeResponder: () => true,
-    }).panHandlers;
-
   const orderedOptions = rankingOrder
     .map((id) => options.find((option) => option.id === id))
     .filter((option): option is OptionRow => Boolean(option));
@@ -616,6 +541,90 @@ export function CurrentPage({
       ...prev,
       [optionId]: !prev[optionId],
     }));
+  };
+
+  const renderVotingRankItem = ({ item, getIndex, drag, isActive }: RenderItemParams<OptionRow>) => {
+    const metadata = parseStoredBookDetails(item.details);
+    const isExpanded = Boolean(expandedVotingOptionIds[item.id]);
+    const rowIndex = (getIndex?.() ?? orderedOptions.findIndex((option) => option.id === item.id)) + 1;
+    return (
+      <View
+        className={`mb-[10px] select-none rounded-[14px] border p-[10px] ${
+          isActive ? "border-[#8CCFCD] bg-[#F7FFFE]" : "border-[#E7ECF2] bg-white"
+        }`}
+        style={
+          isActive
+            ? {
+                transform: [{ scale: 1.015 }],
+                shadowColor: "#111D35",
+                shadowOpacity: 0.16,
+                shadowRadius: 10,
+                shadowOffset: { width: 0, height: 6 },
+                elevation: 7,
+                zIndex: 20,
+              }
+            : undefined
+        }
+      >
+        <View className="flex-row items-center">
+          <View className="mr-[6px] w-[22px] items-center">
+            <Pressable onPress={() => moveOptionById(item.id, -1)}>
+              <ChevronUp size={14} color="#95A1B5" strokeWidth={2.5} />
+            </Pressable>
+            <Pressable
+              className="my-[2px] h-[22px] w-[20px] select-none items-center justify-center"
+              onLongPress={drag}
+              delayLongPress={80}
+              hitSlop={8}
+              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+            >
+              <GripVertical size={16} color="#95A1B5" strokeWidth={2.5} />
+            </Pressable>
+            <Pressable onPress={() => moveOptionById(item.id, 1)}>
+              <ChevronDown size={14} color="#95A1B5" strokeWidth={2.5} />
+            </Pressable>
+          </View>
+          <View className="mr-[10px] h-[34px] w-[34px] items-center justify-center rounded-full bg-[#E9FFF8]">
+            <Text className="font-bold text-[#2E9A98]">{Math.max(rowIndex, 1)}</Text>
+          </View>
+          <View className="flex-1 pr-[8px]">
+            <Text className="text-[18px] font-bold text-[#111D35]">{item.title}</Text>
+            <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
+              {metadata?.author ?? "Unknown author"}
+            </Text>
+          </View>
+          <Pressable
+            className="h-8 w-8 items-center justify-center rounded-[8px] bg-[#F2F5F8]"
+            onPress={() => toggleVotingOptionDetails(item.id)}
+            hitSlop={6}
+            style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+          >
+            {isExpanded ? (
+              <ChevronUp size={18} color="#5C6D89" strokeWidth={2.3} />
+            ) : (
+              <ChevronDown size={18} color="#5C6D89" strokeWidth={2.3} />
+            )}
+          </Pressable>
+        </View>
+        {isExpanded ? (
+          <View className="mt-[8px] border-t border-[#E9EEF5] pt-[8px]">
+            <Text className="text-[13px] text-[#4F5E76]">
+              {metadata?.synopsis?.trim() || "No synopsis available."}
+            </Text>
+            {metadata?.tags && metadata.tags.length > 0 ? (
+              <Text className="mt-[5px] text-[12px] text-[#6D7890]">
+                Tags: {metadata.tags.join(", ")}
+              </Text>
+            ) : null}
+            {typeof metadata?.externalRating === "number" ? (
+              <Text className="mt-[5px] text-[12px] text-[#6D7890]">
+                {ratingLabel(metadata.source)} rating: {metadata.externalRating.toFixed(1)} / 5
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    );
   };
 
   const existingBookKeys = useMemo(() => {
@@ -639,7 +648,7 @@ export function CurrentPage({
       <ScrollView
         className="flex-1 w-full"
         contentContainerClassName="w-full px-[14px] pb-[22px] pt-[14px]"
-        scrollEnabled={!draggingOptionId}
+        scrollEnabled={!isRankingDragging}
       >
         {error ? (
           <Text className="mb-[10px] text-[13px] text-[#9F1D1D]">{error}</Text>
@@ -1052,105 +1061,19 @@ export function CurrentPage({
             {orderedOptions.length === 0 ? (
               <EmptyCard text="No books available for ranking." />
             ) : (
-              orderedOptions.map((option, index) => {
-                const metadata = parseStoredBookDetails(option.details);
-                const isExpanded = Boolean(expandedVotingOptionIds[option.id]);
-                const isDragging = draggingOptionId === option.id;
-                return (
-                  <View
-                    key={option.id}
-                    className={`mb-[10px] select-none rounded-[14px] border p-[10px] ${
-                      isDragging
-                        ? "border-[#8CCFCD] bg-[#F7FFFE]"
-                        : "border-[#E7ECF2] bg-white"
-                    }`}
-                    style={
-                      isDragging
-                        ? {
-                            transform: [{ scale: 1.015 }],
-                            shadowColor: "#111D35",
-                            shadowOpacity: 0.16,
-                            shadowRadius: 10,
-                            shadowOffset: { width: 0, height: 6 },
-                            elevation: 7,
-                          }
-                        : undefined
-                    }
-                  >
-                    <View className="flex-row items-center">
-                      <View className="mr-[6px] w-[22px] items-center">
-                        <Pressable onPress={() => moveOptionById(option.id, -1)}>
-                          <ChevronUp
-                            size={14}
-                            color="#95A1B5"
-                            strokeWidth={2.5}
-                          />
-                        </Pressable>
-                        <View
-                          className="my-[2px] h-[22px] w-[20px] select-none items-center justify-center"
-                          {...getHandlePanHandlers(option.id)}
-                        >
-                          <GripVertical
-                            size={16}
-                            color="#95A1B5"
-                            strokeWidth={2.5}
-                          />
-                        </View>
-                        <Pressable onPress={() => moveOptionById(option.id, 1)}>
-                          <ChevronDown
-                            size={14}
-                            color="#95A1B5"
-                            strokeWidth={2.5}
-                          />
-                        </Pressable>
-                      </View>
-                      <View className="mr-[10px] h-[34px] w-[34px] items-center justify-center rounded-full bg-[#E9FFF8]">
-                        <Text className="font-bold text-[#2E9A98]">
-                          {index + 1}
-                        </Text>
-                      </View>
-                      <View className="flex-1 pr-[8px]">
-                        <Text className="text-[18px] font-bold text-[#111D35]">
-                          {option.title}
-                        </Text>
-                        <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
-                          {metadata?.author ?? "Unknown author"}
-                        </Text>
-                      </View>
-                      <Pressable
-                        className="h-8 w-8 items-center justify-center rounded-[8px] bg-[#F2F5F8]"
-                        onPress={() => toggleVotingOptionDetails(option.id)}
-                        hitSlop={6}
-                        style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
-                      >
-                        {isExpanded ? (
-                          <ChevronUp size={18} color="#5C6D89" strokeWidth={2.3} />
-                        ) : (
-                          <ChevronDown size={18} color="#5C6D89" strokeWidth={2.3} />
-                        )}
-                      </Pressable>
-                    </View>
-                    {isExpanded ? (
-                      <View className="mt-[8px] border-t border-[#E9EEF5] pt-[8px]">
-                        <Text className="text-[13px] text-[#4F5E76]">
-                          {metadata?.synopsis?.trim() || "No synopsis available."}
-                        </Text>
-                        {metadata?.tags && metadata.tags.length > 0 ? (
-                          <Text className="mt-[5px] text-[12px] text-[#6D7890]">
-                            Tags: {metadata.tags.join(", ")}
-                          </Text>
-                        ) : null}
-                        {typeof metadata?.externalRating === "number" ? (
-                          <Text className="mt-[5px] text-[12px] text-[#6D7890]">
-                            {ratingLabel(metadata.source)} rating:{" "}
-                            {metadata.externalRating.toFixed(1)} / 5
-                          </Text>
-                        ) : null}
-                      </View>
-                    ) : null}
-                  </View>
-                );
-              })
+              <DraggableFlatList
+                data={orderedOptions}
+                keyExtractor={(item) => item.id}
+                renderItem={renderVotingRankItem}
+                onDragBegin={() => setIsRankingDragging(true)}
+                onDragEnd={({ data }) => {
+                  setIsRankingDragging(false);
+                  setRankingOrder(data.map((item) => item.id));
+                }}
+                activationDistance={2}
+                scrollEnabled={false}
+                containerStyle={{ flexGrow: 0 }}
+              />
             )}
           </>
         ) : null}
