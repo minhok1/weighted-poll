@@ -72,6 +72,7 @@ type BookSearchResult = {
 };
 const BOOK_SEARCH_COOLDOWN_MS = 1200;
 const DRAG_STEP_PX = 32;
+const DRAG_HYSTERESIS_PX = 10;
 
 export function CurrentPage({
   loading,
@@ -125,12 +126,20 @@ export function CurrentPage({
   const [expandedVotingOptionIds, setExpandedVotingOptionIds] = useState<Record<string, boolean>>({});
   const bookSearchCacheRef = useRef<Map<string, BookSearchResult[]>>(new Map());
   const lastBookSearchAtRef = useRef<number>(0);
+  const rankingOrderRef = useRef<string[]>([]);
   const dragOptionIdRef = useRef<string | null>(null);
-  const dragStepRef = useRef(0);
+  const dragStartOrderRef = useRef<string[]>([]);
+  const dragStartIndexRef = useRef<number>(-1);
+  const dragTargetIndexRef = useRef<number>(-1);
+  const dragStartYRef = useRef<number>(0);
 
   useEffect(() => {
     setRankingOrder(options.map((option) => option.id));
   }, [options]);
+
+  useEffect(() => {
+    rankingOrderRef.current = rankingOrder;
+  }, [rankingOrder]);
 
   const userHasSubmitted = useMemo(() => {
     if (!userId) return false;
@@ -535,38 +544,67 @@ export function CurrentPage({
 
   const resetDragState = () => {
     dragOptionIdRef.current = null;
-    dragStepRef.current = 0;
+    dragStartOrderRef.current = [];
+    dragStartIndexRef.current = -1;
+    dragTargetIndexRef.current = -1;
+    dragStartYRef.current = 0;
     setDraggingOptionId(null);
   };
 
   const getHandlePanHandlers = (optionId: string) =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) =>
         Math.abs(gestureState.dy) > 3,
+      onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+        Math.abs(gestureState.dy) > 2,
       onPanResponderGrant: () => {
+        const startOrder = rankingOrderRef.current;
+        const startIndex = startOrder.indexOf(optionId);
+        if (startIndex < 0) {
+          return;
+        }
         dragOptionIdRef.current = optionId;
-        dragStepRef.current = 0;
+        dragStartOrderRef.current = startOrder;
+        dragStartIndexRef.current = startIndex;
+        dragTargetIndexRef.current = startIndex;
+        dragStartYRef.current = 0;
         setDraggingOptionId(optionId);
       },
       onPanResponderMove: (_, gestureState) => {
         if (dragOptionIdRef.current !== optionId) return;
-        const nextStep =
-          gestureState.dy >= 0
-            ? Math.floor((gestureState.dy + DRAG_STEP_PX / 2) / DRAG_STEP_PX)
-            : Math.ceil((gestureState.dy - DRAG_STEP_PX / 2) / DRAG_STEP_PX);
-        const delta = nextStep - dragStepRef.current;
-        if (delta === 0) return;
-        const direction: -1 | 1 = delta > 0 ? 1 : -1;
-        const steps = Math.abs(delta);
-        for (let i = 0; i < steps; i += 1) {
-          moveOptionById(optionId, direction);
+        const startOrder = dragStartOrderRef.current;
+        const startIndex = dragStartIndexRef.current;
+        if (startOrder.length === 0 || startIndex < 0) return;
+
+        if (dragStartYRef.current === 0) {
+          dragStartYRef.current = gestureState.moveY;
+          return;
         }
-        dragStepRef.current = nextStep;
+
+        const rawDeltaY = gestureState.moveY - dragStartYRef.current;
+        const adjustedDeltaY =
+          rawDeltaY > 0
+            ? Math.max(0, rawDeltaY - DRAG_HYSTERESIS_PX)
+            : Math.min(0, rawDeltaY + DRAG_HYSTERESIS_PX);
+        const stepDelta = Math.trunc(adjustedDeltaY / DRAG_STEP_PX);
+        const nextTargetIndex = Math.max(
+          0,
+          Math.min(startOrder.length - 1, startIndex + stepDelta),
+        );
+        if (nextTargetIndex === dragTargetIndexRef.current) return;
+        dragTargetIndexRef.current = nextTargetIndex;
+
+        const nextOrder = [...startOrder];
+        nextOrder.splice(startIndex, 1);
+        nextOrder.splice(nextTargetIndex, 0, optionId);
+        setRankingOrder(nextOrder);
       },
       onPanResponderRelease: resetDragState,
       onPanResponderTerminate: resetDragState,
-      onPanResponderTerminationRequest: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
     }).panHandlers;
 
   const orderedOptions = rankingOrder
@@ -1021,7 +1059,7 @@ export function CurrentPage({
                 return (
                   <View
                     key={option.id}
-                    className={`mb-[10px] rounded-[14px] border p-[10px] ${
+                    className={`mb-[10px] select-none rounded-[14px] border p-[10px] ${
                       isDragging
                         ? "border-[#8CCFCD] bg-[#F7FFFE]"
                         : "border-[#E7ECF2] bg-white"
@@ -1049,7 +1087,7 @@ export function CurrentPage({
                           />
                         </Pressable>
                         <View
-                          className="my-[2px] h-[22px] w-[20px] items-center justify-center"
+                          className="my-[2px] h-[22px] w-[20px] select-none items-center justify-center"
                           {...getHandlePanHandlers(option.id)}
                         >
                           <GripVertical
