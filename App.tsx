@@ -50,6 +50,7 @@ function AppContent() {
             onCreateSession={(title) => poll.createSession({ title })}
             onAddOption={(title, details) => poll.addOption({ title, details })}
             onRemoveOption={poll.removeOption}
+            onUpdateOption={poll.updateOption}
             onUpdateSessionPhase={poll.updateSessionPhase}
             onSubmitRanking={poll.submitRanking}
             onSubmitSessionRating={poll.submitSessionRating}

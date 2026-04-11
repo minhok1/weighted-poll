@@ -5,11 +5,13 @@ import {
   GripVertical,
   Play,
   Plus,
+  Pencil,
   Search,
   Send,
   Star,
   Trophy,
   Trash2,
+  Undo2,
 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -43,6 +45,7 @@ type Props = {
   onCreateSession: (title: string) => Promise<boolean>;
   onAddOption: (title: string, details: string) => Promise<boolean>;
   onRemoveOption: (optionId: string) => Promise<boolean>;
+  onUpdateOption: (optionId: string, title: string, details: string) => Promise<boolean>;
   onUpdateSessionPhase: (phase: SessionPhase) => Promise<boolean>;
   onSubmitRanking: (orderedOptionIds: string[]) => Promise<boolean>;
   onSubmitSessionRating: (rating: number) => Promise<boolean>;
@@ -81,6 +84,7 @@ export function CurrentPage({
   onCreateSession,
   onAddOption,
   onRemoveOption,
+  onUpdateOption,
   onUpdateSessionPhase,
   onSubmitRanking,
   onSubmitSessionRating,
@@ -100,6 +104,16 @@ export function CurrentPage({
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [addingBookId, setAddingBookId] = useState<string | null>(null);
   const [removingOptionId, setRemovingOptionId] = useState<string | null>(null);
+  const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editAuthor, setEditAuthor] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [editSynopsis, setEditSynopsis] = useState("");
+  const [editRating, setEditRating] = useState("");
+  const [editSource, setEditSource] = useState<StoredBookDetails["source"]>("manual");
+  const [editCoverUrl, setEditCoverUrl] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const [submittingRating, setSubmittingRating] = useState(false);
   const [rankingOrder, setRankingOrder] = useState<string[]>([]);
   const [draftRating, setDraftRating] = useState<number>(0);
@@ -434,6 +448,73 @@ export function CurrentPage({
     }
   };
 
+  const beginEditingOption = (option: OptionRow) => {
+    const metadata = parseStoredBookDetails(option.details);
+    setEditingOptionId(option.id);
+    setEditTitle(option.title);
+    setEditAuthor(metadata?.author ?? "");
+    setEditTags((metadata?.tags ?? []).join(", "));
+    setEditSynopsis(metadata?.synopsis ?? "");
+    setEditRating(
+      typeof metadata?.externalRating === "number"
+        ? metadata.externalRating.toString()
+        : "",
+    );
+    setEditSource((metadata?.source ?? "manual") as StoredBookDetails["source"]);
+    setEditCoverUrl(metadata?.coverUrl ?? null);
+    setEditError(null);
+  };
+
+  const saveOptionEdit = async () => {
+    if (!editingOptionId) return;
+    const title = editTitle.trim();
+    const author = editAuthor.trim();
+    const synopsis = editSynopsis.trim();
+    const tags = editTags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0)
+      .slice(0, 8);
+    const parsedRating = editRating.trim()
+      ? Number.parseFloat(editRating.trim())
+      : null;
+
+    if (!title) {
+      setEditError("Title is required.");
+      return;
+    }
+    if (!author) {
+      setEditError("Author is required.");
+      return;
+    }
+    if (
+      parsedRating !== null &&
+      (!Number.isFinite(parsedRating) || parsedRating < 0 || parsedRating > 5)
+    ) {
+      setEditError("Rating must be a number between 0 and 5.");
+      return;
+    }
+
+    setEditError(null);
+    setEditSubmitting(true);
+    const detailsPayload = JSON.stringify({
+      source: editSource ?? "manual",
+      synopsis: synopsis || "No synopsis available.",
+      author,
+      tags,
+      coverUrl: editCoverUrl,
+      externalRating:
+        parsedRating === null ? null : Math.round(parsedRating * 10) / 10,
+    } satisfies StoredBookDetails);
+
+    const ok = await onUpdateOption(editingOptionId, title, detailsPayload);
+    setEditSubmitting(false);
+    if (ok) {
+      setEditingOptionId(null);
+      setEditError(null);
+    }
+  };
+
   const moveOption = (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= rankingOrder.length) return;
@@ -700,53 +781,144 @@ export function CurrentPage({
               options.map((option) => {
                 const metadata = parseStoredBookDetails(option.details);
                 return (
-                  <View
-                    key={option.id}
-                    className="mb-[10px] flex-row items-center rounded-[14px] border border-[#E7ECF2] bg-white p-[10px]"
-                  >
-                    <BookCover
-                      coverUrl={metadata?.coverUrl ?? null}
-                      className="mr-[10px] h-[60px] w-[46px] rounded-lg bg-[#C8D6E3]"
-                    />
-                    <View className="flex-1">
-                      <Text className="text-[18px] font-bold text-[#111D35]">
-                        {option.title}
-                      </Text>
-                      <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
-                        {metadata?.author ?? "Unknown author"}
-                      </Text>
-                      {typeof metadata?.externalRating === "number" ? (
-                        <Text className="mt-[1px] text-[13px] text-[#6D7890]">
-                          {ratingLabel(metadata.source)} rating:{" "}
-                          {metadata.externalRating.toFixed(1)} / 5
+                  <View key={option.id}>
+                    <View className="mb-[10px] flex-row items-center rounded-[14px] border border-[#E7ECF2] bg-white p-[10px]">
+                      <BookCover
+                        coverUrl={metadata?.coverUrl ?? null}
+                        className="mr-[10px] h-[60px] w-[46px] rounded-lg bg-[#C8D6E3]"
+                      />
+                      <View className="flex-1">
+                        <Text className="text-[18px] font-bold text-[#111D35]">
+                          {option.title}
                         </Text>
-                      ) : null}
-                      {metadata?.tags && metadata.tags.length > 0 ? (
-                        <Text className="mt-[1px] text-[13px] text-[#6D7890]">
-                          Tags: {metadata.tags.join(", ")}
+                        <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
+                          {metadata?.author ?? "Unknown author"}
                         </Text>
-                      ) : null}
+                        {typeof metadata?.externalRating === "number" ? (
+                          <Text className="mt-[1px] text-[13px] text-[#6D7890]">
+                            {ratingLabel(metadata.source)} rating:{" "}
+                            {metadata.externalRating.toFixed(1)} / 5
+                          </Text>
+                        ) : null}
+                        {metadata?.tags && metadata.tags.length > 0 ? (
+                          <Text className="mt-[1px] text-[13px] text-[#6D7890]">
+                            Tags: {metadata.tags.join(", ")}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <View className="ml-[8px] flex-row items-center">
+                        <Pressable
+                          className="mr-[6px] h-9 w-9 items-center justify-center rounded-[9px] bg-[#EEF2FF]"
+                          onPress={() => beginEditingOption(option)}
+                          hitSlop={6}
+                          style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+                        >
+                          <Pencil size={16} color="#344B7A" strokeWidth={2.4} />
+                        </Pressable>
+                        <Pressable
+                          className="h-9 w-9 items-center justify-center rounded-[9px] bg-[#FEEFF0]"
+                          onPress={async () => {
+                            setRemovingOptionId(option.id);
+                            try {
+                              await onRemoveOption(option.id);
+                            } finally {
+                              setRemovingOptionId(null);
+                            }
+                          }}
+                          hitSlop={6}
+                          disabled={removingOptionId === option.id}
+                          style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+                        >
+                          {removingOptionId === option.id ? (
+                            <ActivityIndicator color="#B42318" />
+                          ) : (
+                            <Trash2 size={16} color="#B42318" strokeWidth={2.4} />
+                          )}
+                        </Pressable>
+                      </View>
                     </View>
-                    <Pressable
-                      className="ml-[8px] h-9 w-9 items-center justify-center rounded-[9px] bg-[#FEEFF0]"
-                      onPress={async () => {
-                        setRemovingOptionId(option.id);
-                        try {
-                          await onRemoveOption(option.id);
-                        } finally {
-                          setRemovingOptionId(null);
-                        }
-                      }}
-                      hitSlop={6}
-                      disabled={removingOptionId === option.id}
-                      style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
-                    >
-                      {removingOptionId === option.id ? (
-                        <ActivityIndicator color="#B42318" />
-                      ) : (
-                        <Trash2 size={16} color="#B42318" strokeWidth={2.4} />
-                      )}
-                    </Pressable>
+                    {editingOptionId === option.id ? (
+                    <View className="mt-[10px] rounded-[12px] border border-[#E7ECF2] bg-[#FAFBFD] p-[10px]">
+                      <Text className="mb-[8px] text-[15px] font-bold text-[#273655]">
+                        Edit book details
+                      </Text>
+                      <TextInput
+                        className="mb-[8px] h-11 rounded-lg border border-[#E7ECF2] px-[12px] text-[15px] text-[#111D35]"
+                        value={editTitle}
+                        onChangeText={setEditTitle}
+                        placeholder="Book title"
+                        placeholderTextColor="#A2AABC"
+                      />
+                      <TextInput
+                        className="mb-[8px] h-11 rounded-lg border border-[#E7ECF2] px-[12px] text-[15px] text-[#111D35]"
+                        value={editAuthor}
+                        onChangeText={setEditAuthor}
+                        placeholder="Author"
+                        placeholderTextColor="#A2AABC"
+                      />
+                      <TextInput
+                        className="mb-[8px] h-11 rounded-lg border border-[#E7ECF2] px-[12px] text-[15px] text-[#111D35]"
+                        value={editTags}
+                        onChangeText={setEditTags}
+                        placeholder="Tags (comma separated)"
+                        placeholderTextColor="#A2AABC"
+                      />
+                      <TextInput
+                        className="mb-[8px] min-h-[84px] rounded-lg border border-[#E7ECF2] px-[12px] py-[9px] text-[15px] text-[#111D35]"
+                        value={editSynopsis}
+                        onChangeText={setEditSynopsis}
+                        placeholder="Synopsis"
+                        placeholderTextColor="#A2AABC"
+                        multiline
+                        textAlignVertical="top"
+                      />
+                      <TextInput
+                        className="mb-[8px] h-11 rounded-lg border border-[#E7ECF2] px-[12px] text-[15px] text-[#111D35]"
+                        value={editRating}
+                        onChangeText={setEditRating}
+                        placeholder="Rating out of 5"
+                        placeholderTextColor="#A2AABC"
+                        keyboardType="decimal-pad"
+                      />
+                      <TextInput
+                        className="mb-[8px] h-11 rounded-lg border border-[#E7ECF2] px-[12px] text-[15px] text-[#111D35]"
+                        value={editSource ?? ""}
+                        onChangeText={(value) => setEditSource(value as StoredBookDetails["source"])}
+                        placeholder="Source (manual/open-library)"
+                        placeholderTextColor="#A2AABC"
+                      />
+                      {editError ? (
+                        <Text className="mb-[8px] text-[13px] text-[#9F1D1D]">
+                          {editError}
+                        </Text>
+                      ) : null}
+                      <View className="flex-row items-center justify-end">
+                        <Pressable
+                          className="mr-[8px] rounded-lg bg-[#ECEEF3] px-3 py-2"
+                          onPress={() => setEditingOptionId(null)}
+                          style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+                        >
+                          <Text className="text-[13px] font-bold text-[#273655]">
+                            Cancel
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          className={`h-9 min-w-[82px] items-center justify-center rounded-lg ${
+                            editSubmitting ? "bg-[#8FC8C7]" : "bg-[#2E9A98]"
+                          }`}
+                          onPress={() => void saveOptionEdit()}
+                          disabled={editSubmitting}
+                          style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+                        >
+                          {editSubmitting ? (
+                            <ActivityIndicator color="#FFFFFF" />
+                          ) : (
+                            <Text className="text-[13px] font-bold text-white">Save</Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    </View>
+                    ) : null}
                   </View>
                 );
               })
@@ -1025,6 +1197,19 @@ export function CurrentPage({
             icon={<Play size={21} color="#FFFFFF" strokeWidth={2.4} />}
             onPress={() => void onUpdateSessionPhase("voting")}
             disabled={options.length < 2}
+          />
+        ) : null}
+        {currentSession?.phase === "voting" ? (
+          <PrimaryActionButton
+            label="Back to Brainstorming"
+            icon={<Undo2 size={19} color="#FFFFFF" strokeWidth={2.4} />}
+            onPress={async () => {
+              const ok = await onUpdateSessionPhase("brainstorming");
+              if (ok) {
+                setIsEditingSubmission(false);
+              }
+            }}
+            color="#4A5D80"
           />
         ) : null}
         {currentSession?.phase === "voting" &&

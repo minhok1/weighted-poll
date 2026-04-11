@@ -45,6 +45,7 @@ type UsePollDataResult = {
   createSession: (input: CreateSessionInput) => Promise<boolean>;
   addOption: (input: AddOptionInput) => Promise<boolean>;
   removeOption: (optionId: string) => Promise<boolean>;
+  updateOption: (optionId: string, title: string, details: string) => Promise<boolean>;
   updateSessionPhase: (phase: SessionPhase) => Promise<boolean>;
   submitRanking: (orderedOptionIds: string[]) => Promise<boolean>;
   submitSessionRating: (rating: number) => Promise<boolean>;
@@ -704,6 +705,46 @@ export function usePollData(): UsePollDataResult {
     [currentSession, refresh, userId]
   );
 
+  const updateOption = useCallback(
+    async (optionId: string, title: string, details: string) => {
+      setErrorScope('current');
+      if (!supabase || !currentSession) {
+        setError('No active session.');
+        return false;
+      }
+      if (!userId) {
+        setError('Please log in before editing books.');
+        return false;
+      }
+      if (!optionId.trim()) {
+        setError('Invalid book.');
+        return false;
+      }
+      if (!title.trim()) {
+        setError('Book title is required.');
+        return false;
+      }
+
+      const result = await supabase
+        .from('session_options')
+        .update({
+          title: title.trim(),
+          details: details.trim() || null,
+        })
+        .eq('id', optionId)
+        .eq('session_id', currentSession.id);
+
+      if (result.error) {
+        setError(result.error.message);
+        return false;
+      }
+
+      await refresh();
+      return true;
+    },
+    [currentSession, refresh, userId]
+  );
+
   const updateSessionPhase = useCallback(
     async (phase: SessionPhase) => {
       setErrorScope('current');
@@ -900,6 +941,7 @@ export function usePollData(): UsePollDataResult {
     createSession,
     addOption,
     removeOption,
+    updateOption,
     updateSessionPhase,
     submitRanking,
     submitSessionRating,
