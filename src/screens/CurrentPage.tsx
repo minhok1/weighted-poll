@@ -609,14 +609,10 @@ export function CurrentPage({
                     className="mb-[10px] rounded-[12px] border border-[#E7ECF2] p-[10px]"
                   >
                     <View className="flex-row">
-                      {book.coverUrl ? (
-                        <Image
-                          source={{ uri: book.coverUrl }}
-                          className="mr-[10px] h-[80px] w-[54px] rounded-[8px] bg-[#D7E0EA]"
-                        />
-                      ) : (
-                        <View className="mr-[10px] h-[80px] w-[54px] rounded-[8px] bg-[#C8D6E3]" />
-                      )}
+                      <BookCover
+                        coverUrl={book.coverUrl}
+                        className="mr-[10px] h-[80px] w-[54px] rounded-[8px] bg-[#D7E0EA]"
+                      />
                       <View className="flex-1">
                         <Text className="text-[16px] font-bold text-[#111D35]">
                           {book.title}
@@ -708,14 +704,10 @@ export function CurrentPage({
                     key={option.id}
                     className="mb-[10px] flex-row items-center rounded-[14px] border border-[#E7ECF2] bg-white p-[10px]"
                   >
-                    {metadata?.coverUrl ? (
-                      <Image
-                        source={{ uri: metadata.coverUrl }}
-                        className="mr-[10px] h-[60px] w-[46px] rounded-lg bg-[#C8D6E3]"
-                      />
-                    ) : (
-                      <View className="mr-[10px] h-[60px] w-[46px] rounded-lg bg-[#C8D6E3]" />
-                    )}
+                    <BookCover
+                      coverUrl={metadata?.coverUrl ?? null}
+                      className="mr-[10px] h-[60px] w-[46px] rounded-lg bg-[#C8D6E3]"
+                    />
                     <View className="flex-1">
                       <Text className="text-[18px] font-bold text-[#111D35]">
                         {option.title}
@@ -870,8 +862,8 @@ export function CurrentPage({
             {topOption ? (
               <View className="mb-3 flex-row items-center rounded-[14px] border border-[#E7ECF2] bg-white p-[10px]">
                 {topOption.coverUrl ? (
-                  <Image
-                    source={{ uri: topOption.coverUrl }}
+                  <BookCover
+                    coverUrl={topOption.coverUrl}
                     className="mr-[10px] h-[60px] w-[46px] rounded-lg bg-[#C8D6E3]"
                   />
                 ) : (
@@ -1080,11 +1072,46 @@ function EmptyCard({ text }: { text: string }) {
   );
 }
 
+function BookCover({ coverUrl, className }: { coverUrl: string | null; className: string }) {
+  const candidates = useMemo(() => buildCoverCandidates(coverUrl), [coverUrl]);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const activeUri = candidates[candidateIndex] ?? null;
+
+  if (!activeUri) {
+    return <View className={className} />;
+  }
+
+  return (
+    <Image
+      source={{ uri: activeUri }}
+      className={className}
+      onError={() => {
+        if (candidateIndex < candidates.length - 1) {
+          setCandidateIndex((prev) => prev + 1);
+        }
+      }}
+    />
+  );
+}
+
 function starFill(rating: number, starNumber: number) {
   const diff = rating - (starNumber - 1);
   if (diff >= 1) return 1;
   if (diff >= 0.5) return 0.5;
   return 0;
+}
+
+function buildCoverCandidates(coverUrl: string | null) {
+  if (!coverUrl) {
+    return [];
+  }
+  const normalized = coverUrl.trim().replace(/^http:\/\//i, "https://");
+  if (!normalized) {
+    return [];
+  }
+  const withoutProtocol = normalized.replace(/^https?:\/\//i, "");
+  const proxyUrl = `https://images.weserv.nl/?url=${encodeURIComponent(withoutProtocol)}`;
+  return [normalized, proxyUrl];
 }
 
 function normalizeBookKey(title: string, author: string) {
