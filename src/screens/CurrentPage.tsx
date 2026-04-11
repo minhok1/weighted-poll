@@ -1,5 +1,6 @@
 import {
   Check,
+  ChevronLeft,
   ChevronDown,
   ChevronUp,
   GripVertical,
@@ -11,12 +12,12 @@ import {
   Star,
   Trophy,
   Trash2,
-  Undo2,
 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  PanResponder,
   Pressable,
   ScrollView,
   Text,
@@ -70,6 +71,7 @@ type BookSearchResult = {
   coverUrl: string | null;
 };
 const BOOK_SEARCH_COOLDOWN_MS = 1200;
+const DRAG_STEP_PX = 32;
 
 export function CurrentPage({
   loading,
@@ -119,8 +121,12 @@ export function CurrentPage({
   const [draftRating, setDraftRating] = useState<number>(0);
   const [ratingNotice, setRatingNotice] = useState<string | null>(null);
   const [isEditingSubmission, setIsEditingSubmission] = useState(false);
+  const [draggingOptionId, setDraggingOptionId] = useState<string | null>(null);
+  const [expandedVotingOptionIds, setExpandedVotingOptionIds] = useState<Record<string, boolean>>({});
   const bookSearchCacheRef = useRef<Map<string, BookSearchResult[]>>(new Map());
   const lastBookSearchAtRef = useRef<number>(0);
+  const dragOptionIdRef = useRef<string | null>(null);
+  const dragStepRef = useRef(0);
 
   useEffect(() => {
     setRankingOrder(options.map((option) => option.id));
@@ -515,17 +521,64 @@ export function CurrentPage({
     }
   };
 
-  const moveOption = (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= rankingOrder.length) return;
-    const next = [...rankingOrder];
-    [next[index], next[target]] = [next[target], next[index]];
-    setRankingOrder(next);
+  const moveOptionById = (optionId: string, direction: -1 | 1) => {
+    setRankingOrder((prev) => {
+      const index = prev.indexOf(optionId);
+      if (index < 0) return prev;
+      const target = index + direction;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
   };
+
+  const resetDragState = () => {
+    dragOptionIdRef.current = null;
+    dragStepRef.current = 0;
+    setDraggingOptionId(null);
+  };
+
+  const getHandlePanHandlers = (optionId: string) =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dy) > 3,
+      onPanResponderGrant: () => {
+        dragOptionIdRef.current = optionId;
+        dragStepRef.current = 0;
+        setDraggingOptionId(optionId);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (dragOptionIdRef.current !== optionId) return;
+        const nextStep =
+          gestureState.dy >= 0
+            ? Math.floor((gestureState.dy + DRAG_STEP_PX / 2) / DRAG_STEP_PX)
+            : Math.ceil((gestureState.dy - DRAG_STEP_PX / 2) / DRAG_STEP_PX);
+        const delta = nextStep - dragStepRef.current;
+        if (delta === 0) return;
+        const direction: -1 | 1 = delta > 0 ? 1 : -1;
+        const steps = Math.abs(delta);
+        for (let i = 0; i < steps; i += 1) {
+          moveOptionById(optionId, direction);
+        }
+        dragStepRef.current = nextStep;
+      },
+      onPanResponderRelease: resetDragState,
+      onPanResponderTerminate: resetDragState,
+      onPanResponderTerminationRequest: () => true,
+    }).panHandlers;
 
   const orderedOptions = rankingOrder
     .map((id) => options.find((option) => option.id === id))
     .filter((option): option is OptionRow => Boolean(option));
+
+  const toggleVotingOptionDetails = (optionId: string) => {
+    setExpandedVotingOptionIds((prev) => ({
+      ...prev,
+      [optionId]: !prev[optionId],
+    }));
+  };
 
   const existingBookKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -548,9 +601,30 @@ export function CurrentPage({
       <ScrollView
         className="flex-1 w-full"
         contentContainerClassName="w-full px-[14px] pb-[22px] pt-[14px]"
+        scrollEnabled={!draggingOptionId}
       >
         {error ? (
           <Text className="mb-[10px] text-[13px] text-[#9F1D1D]">{error}</Text>
+        ) : null}
+        {currentSession?.phase === "voting" ? (
+          <View className="mb-[8px] items-start">
+            <Pressable
+              onPress={async () => {
+                const ok = await onUpdateSessionPhase("brainstorming");
+                if (ok) {
+                  setIsEditingSubmission(false);
+                }
+              }}
+              hitSlop={6}
+              style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}
+              className="flex-row items-center"
+            >
+              <ChevronLeft size={14} color="#4A5D80" strokeWidth={2.5} />
+              <Text className="ml-[2px] text-[13px] font-semibold text-[#4A5D80]">
+                Back to brainstorming
+              </Text>
+            </Pressable>
+          </View>
         ) : null}
 
         {!currentSession ? (
@@ -942,45 +1016,100 @@ export function CurrentPage({
             ) : (
               orderedOptions.map((option, index) => {
                 const metadata = parseStoredBookDetails(option.details);
+                const isExpanded = Boolean(expandedVotingOptionIds[option.id]);
+                const isDragging = draggingOptionId === option.id;
                 return (
                   <View
                     key={option.id}
-                    className="mb-[10px] flex-row items-center rounded-[14px] border border-[#E7ECF2] bg-white p-[10px]"
+                    className={`mb-[10px] rounded-[14px] border p-[10px] ${
+                      isDragging
+                        ? "border-[#8CCFCD] bg-[#F7FFFE]"
+                        : "border-[#E7ECF2] bg-white"
+                    }`}
+                    style={
+                      isDragging
+                        ? {
+                            transform: [{ scale: 1.015 }],
+                            shadowColor: "#111D35",
+                            shadowOpacity: 0.16,
+                            shadowRadius: 10,
+                            shadowOffset: { width: 0, height: 6 },
+                            elevation: 7,
+                          }
+                        : undefined
+                    }
                   >
-                    <View className="mr-[6px] w-[22px] items-center">
-                      <Pressable onPress={() => moveOption(index, -1)}>
-                        <ChevronUp
-                          size={14}
-                          color="#95A1B5"
-                          strokeWidth={2.5}
-                        />
+                    <View className="flex-row items-center">
+                      <View className="mr-[6px] w-[22px] items-center">
+                        <Pressable onPress={() => moveOptionById(option.id, -1)}>
+                          <ChevronUp
+                            size={14}
+                            color="#95A1B5"
+                            strokeWidth={2.5}
+                          />
+                        </Pressable>
+                        <View
+                          className="my-[2px] h-[22px] w-[20px] items-center justify-center"
+                          {...getHandlePanHandlers(option.id)}
+                        >
+                          <GripVertical
+                            size={16}
+                            color="#95A1B5"
+                            strokeWidth={2.5}
+                          />
+                        </View>
+                        <Pressable onPress={() => moveOptionById(option.id, 1)}>
+                          <ChevronDown
+                            size={14}
+                            color="#95A1B5"
+                            strokeWidth={2.5}
+                          />
+                        </Pressable>
+                      </View>
+                      <View className="mr-[10px] h-[34px] w-[34px] items-center justify-center rounded-full bg-[#E9FFF8]">
+                        <Text className="font-bold text-[#2E9A98]">
+                          {index + 1}
+                        </Text>
+                      </View>
+                      <View className="flex-1 pr-[8px]">
+                        <Text className="text-[18px] font-bold text-[#111D35]">
+                          {option.title}
+                        </Text>
+                        <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
+                          {metadata?.author ?? "Unknown author"}
+                        </Text>
+                      </View>
+                      <Pressable
+                        className="h-8 w-8 items-center justify-center rounded-[8px] bg-[#F2F5F8]"
+                        onPress={() => toggleVotingOptionDetails(option.id)}
+                        hitSlop={6}
+                        style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+                      >
+                        {isExpanded ? (
+                          <ChevronUp size={18} color="#5C6D89" strokeWidth={2.3} />
+                        ) : (
+                          <ChevronDown size={18} color="#5C6D89" strokeWidth={2.3} />
+                        )}
                       </Pressable>
-                      <GripVertical
-                        size={16}
-                        color="#95A1B5"
-                        strokeWidth={2.5}
-                      />
-                      <Pressable onPress={() => moveOption(index, 1)}>
-                        <ChevronDown
-                          size={14}
-                          color="#95A1B5"
-                          strokeWidth={2.5}
-                        />
-                      </Pressable>
                     </View>
-                    <View className="mr-[10px] h-[34px] w-[34px] items-center justify-center rounded-full bg-[#E9FFF8]">
-                      <Text className="font-bold text-[#2E9A98]">
-                        {index + 1}
-                      </Text>
-                    </View>
-                    <View className="flex-1">
-                      <Text className="text-[18px] font-bold text-[#111D35]">
-                        {option.title}
-                      </Text>
-                      <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
-                        {metadata?.author ?? "Unknown author"}
-                      </Text>
-                    </View>
+                    {isExpanded ? (
+                      <View className="mt-[8px] border-t border-[#E9EEF5] pt-[8px]">
+                        <Text className="text-[13px] text-[#4F5E76]">
+                          {metadata?.synopsis?.trim() || "No synopsis available."}
+                        </Text>
+                        {metadata?.tags && metadata.tags.length > 0 ? (
+                          <Text className="mt-[5px] text-[12px] text-[#6D7890]">
+                            Tags: {metadata.tags.join(", ")}
+                          </Text>
+                        ) : null}
+                        {typeof metadata?.externalRating === "number" ? (
+                          <Text className="mt-[5px] text-[12px] text-[#6D7890]">
+                            {ratingLabel(metadata.source)} rating:{" "}
+                            {metadata.externalRating.toFixed(1)} / 5
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
                   </View>
                 );
               })
@@ -1197,19 +1326,6 @@ export function CurrentPage({
             icon={<Play size={21} color="#FFFFFF" strokeWidth={2.4} />}
             onPress={() => void onUpdateSessionPhase("voting")}
             disabled={options.length < 2}
-          />
-        ) : null}
-        {currentSession?.phase === "voting" ? (
-          <PrimaryActionButton
-            label="Back to Brainstorming"
-            icon={<Undo2 size={19} color="#FFFFFF" strokeWidth={2.4} />}
-            onPress={async () => {
-              const ok = await onUpdateSessionPhase("brainstorming");
-              if (ok) {
-                setIsEditingSubmission(false);
-              }
-            }}
-            color="#4A5D80"
           />
         ) : null}
         {currentSession?.phase === "voting" &&
