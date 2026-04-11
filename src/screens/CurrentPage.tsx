@@ -13,6 +13,7 @@ import {
 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
@@ -49,7 +50,7 @@ type Props = {
 
 type RankingEntry = { option_id: string; position: number };
 type StoredBookDetails = {
-  source?: "open-library";
+  source?: "open-library" | "manual";
   synopsis?: string;
   author?: string;
   tags?: string[];
@@ -89,6 +90,17 @@ export function CurrentPage({
   const [bookResults, setBookResults] = useState<BookSearchResult[]>([]);
   const [searchingBooks, setSearchingBooks] = useState(false);
   const [bookSearchError, setBookSearchError] = useState<string | null>(null);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualAuthor, setManualAuthor] = useState("");
+  const [manualTags, setManualTags] = useState("");
+  const [manualSynopsis, setManualSynopsis] = useState("");
+  const [manualRating, setManualRating] = useState("");
+  const [manualAddError, setManualAddError] = useState<string | null>(null);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [addingBookId, setAddingBookId] = useState<string | null>(null);
+  const [removingOptionId, setRemovingOptionId] = useState<string | null>(null);
+  const [submittingRating, setSubmittingRating] = useState(false);
   const [rankingOrder, setRankingOrder] = useState<string[]>([]);
   const [draftRating, setDraftRating] = useState<number>(0);
   const [ratingNotice, setRatingNotice] = useState<string | null>(null);
@@ -196,6 +208,7 @@ export function CurrentPage({
       title: found?.title ?? first.title ?? "Top book",
       details: metadata?.synopsis ?? found?.details ?? "",
       author: metadata?.author ?? null,
+      source: metadata?.source ?? null,
       coverUrl: metadata?.coverUrl ?? null,
       externalRating: metadata?.externalRating ?? null,
       score: typeof first.score === "number" ? first.score : null,
@@ -282,7 +295,7 @@ export function CurrentPage({
             workKey: doc.key ?? null,
             title: doc.title?.trim() || "Untitled",
             author: (doc.author_name ?? []).join(", ") || "Unknown author",
-            synopsis: synopsis || "No synopsis available.",
+            synopsis,
             tags: (doc.subject ?? []).slice(0, 8),
             coverUrl: doc.cover_i
               ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`
@@ -322,17 +335,24 @@ export function CurrentPage({
     let externalRating: number | null = null;
 
     try {
-      const workResponse = await fetch(`https://openlibrary.org${workKey}.json`);
+      const workResponse = await fetch(
+        `https://openlibrary.org${workKey}.json`,
+      );
       if (workResponse.ok) {
         const workPayload = (await workResponse.json()) as {
           description?: string | { value?: string };
           subjects?: string[];
         };
-        const description = extractOpenLibraryDescription(workPayload.description);
+        const description = extractOpenLibraryDescription(
+          workPayload.description,
+        );
         if (description) {
           synopsis = description;
         }
-        if (Array.isArray(workPayload.subjects) && workPayload.subjects.length > 0) {
+        if (
+          Array.isArray(workPayload.subjects) &&
+          workPayload.subjects.length > 0
+        ) {
           tags = workPayload.subjects.slice(0, 8);
         }
       }
@@ -341,7 +361,9 @@ export function CurrentPage({
     }
 
     try {
-      const ratingsResponse = await fetch(`https://openlibrary.org${workKey}/ratings.json`);
+      const ratingsResponse = await fetch(
+        `https://openlibrary.org${workKey}/ratings.json`,
+      );
       if (ratingsResponse.ok) {
         const ratingsPayload = (await ratingsResponse.json()) as {
           summary?: { average?: number };
@@ -363,6 +385,55 @@ export function CurrentPage({
     return { synopsis, tags, externalRating };
   };
 
+  const addManualBook = async () => {
+    const title = manualTitle.trim();
+    const author = manualAuthor.trim();
+    const synopsis = manualSynopsis.trim();
+    const tags = manualTags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0)
+      .slice(0, 8);
+    const parsedRating = manualRating.trim()
+      ? Number.parseFloat(manualRating.trim())
+      : null;
+
+    if (!title) {
+      setManualAddError("Title is required.");
+      return;
+    }
+    if (!author) {
+      setManualAddError("Author is required.");
+      return;
+    }
+    if (parsedRating !== null && (!Number.isFinite(parsedRating) || parsedRating < 0 || parsedRating > 5)) {
+      setManualAddError("Rating must be a number between 0 and 5.");
+      return;
+    }
+
+    setManualAddError(null);
+    setManualSubmitting(true);
+    const detailsPayload = JSON.stringify({
+      source: "manual",
+      synopsis: synopsis || "No synopsis available.",
+      author,
+      tags,
+      coverUrl: null,
+      externalRating: parsedRating === null ? null : Math.round(parsedRating * 10) / 10,
+    } satisfies StoredBookDetails);
+
+    const ok = await onAddOption(title, detailsPayload);
+    setManualSubmitting(false);
+    if (ok) {
+      setManualTitle("");
+      setManualAuthor("");
+      setManualTags("");
+      setManualSynopsis("");
+      setManualRating("");
+      setShowManualForm(false);
+    }
+  };
+
   const moveOption = (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= rankingOrder.length) return;
@@ -374,6 +445,16 @@ export function CurrentPage({
   const orderedOptions = rankingOrder
     .map((id) => options.find((option) => option.id === id))
     .filter((option): option is OptionRow => Boolean(option));
+
+  const existingBookKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const option of options) {
+      const metadata = parseStoredBookDetails(option.details);
+      const author = metadata?.author ?? "";
+      keys.add(normalizeBookKey(option.title, author));
+    }
+    return keys;
+  }, [options]);
 
   return (
     <View className="flex-1 w-full self-stretch bg-white">
@@ -444,12 +525,85 @@ export function CurrentPage({
                 </Text>
               ) : null}
             </View>
+            <View className="mb-[14px] rounded-[14px] border border-[#E7ECF2] bg-white p-[14px]">
+              <Pressable
+                className="h-11 items-center justify-center rounded-[10px] bg-[#ECEEF3]"
+                onPress={() => setShowManualForm((prev) => !prev)}
+                style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+              >
+                <Text className="text-[13px] font-bold text-[#273655]">
+                  {showManualForm ? "Hide manual form" : "Add manually"}
+                </Text>
+              </Pressable>
+              {showManualForm ? (
+                <View className="mt-3">
+                  <TextInput
+                    className="mb-[10px] h-12 rounded-xl border border-[#E7ECF2] px-[14px] text-[16px] text-[#111D35]"
+                    value={manualTitle}
+                    onChangeText={setManualTitle}
+                    placeholder="Book title"
+                    placeholderTextColor="#A2AABC"
+                  />
+                  <TextInput
+                    className="mb-[10px] h-12 rounded-xl border border-[#E7ECF2] px-[14px] text-[16px] text-[#111D35]"
+                    value={manualAuthor}
+                    onChangeText={setManualAuthor}
+                    placeholder="Author"
+                    placeholderTextColor="#A2AABC"
+                  />
+                  <TextInput
+                    className="mb-[10px] h-12 rounded-xl border border-[#E7ECF2] px-[14px] text-[16px] text-[#111D35]"
+                    value={manualTags}
+                    onChangeText={setManualTags}
+                    placeholder="Tags (comma separated)"
+                    placeholderTextColor="#A2AABC"
+                  />
+                  <TextInput
+                    className="mb-[10px] min-h-[92px] rounded-xl border border-[#E7ECF2] px-[14px] py-[10px] text-[16px] text-[#111D35]"
+                    value={manualSynopsis}
+                    onChangeText={setManualSynopsis}
+                    placeholder="Synopsis"
+                    placeholderTextColor="#A2AABC"
+                    multiline
+                    textAlignVertical="top"
+                  />
+                  <TextInput
+                    className="mb-[10px] h-12 rounded-xl border border-[#E7ECF2] px-[14px] text-[16px] text-[#111D35]"
+                    value={manualRating}
+                    onChangeText={setManualRating}
+                    placeholder="Rating out of 5 (e.g. 4.5)"
+                    placeholderTextColor="#A2AABC"
+                    keyboardType="decimal-pad"
+                  />
+                  <Text className="mb-[10px] text-[12px] text-[#6D7890]">
+                    Source: manual
+                  </Text>
+                  {manualAddError ? (
+                    <Text className="mb-[8px] text-[13px] text-[#9F1D1D]">
+                      {manualAddError}
+                    </Text>
+                  ) : null}
+                  <PrimaryActionButton
+                    label="Add manually"
+                    icon={<Plus size={19} color="#FFFFFF" strokeWidth={2.5} />}
+                    onPress={() => void addManualBook()}
+                    disabled={!manualTitle.trim() || !manualAuthor.trim()}
+                    loading={manualSubmitting}
+                  />
+                </View>
+              ) : null}
+            </View>
             {bookResults.length > 0 ? (
               <View className="mb-[14px] rounded-[14px] border border-[#E7ECF2] bg-white p-[14px]">
                 <Text className="mb-2 text-[16px] font-bold text-[#2A3550]">
                   Search results
                 </Text>
-                {bookResults.map((book) => (
+                {bookResults.map((book) => {
+                  const alreadyAdded = existingBookKeys.has(
+                    normalizeBookKey(book.title, book.author),
+                  );
+                  const isAdding = addingBookId === book.id;
+                  return (
                   <View
                     key={book.id}
                     className="mb-[10px] rounded-[12px] border border-[#E7ECF2] p-[10px]"
@@ -470,12 +624,18 @@ export function CurrentPage({
                         <Text className="mt-[2px] text-[14px] text-[#4D5A71]">
                           {book.author}
                         </Text>
-                        <Text
-                          className="mt-[2px] text-[13px] text-[#5B6780]"
-                          numberOfLines={3}
-                        >
-                          {book.synopsis}
-                        </Text>
+                        {book.synopsis ? (
+                          <Text
+                            className="mt-[2px] text-[13px] text-[#5B6780]"
+                            numberOfLines={3}
+                          >
+                            {book.synopsis}
+                          </Text>
+                        ) : (
+                          <Text className="mt-[2px] text-[12px] text-[#7A879E]">
+                            Detailed synopsis will be fetched when you add this book.
+                          </Text>
+                        )}
                         {book.tags.length > 0 ? (
                           <Text className="mt-[2px] text-[12px] text-[#6D7890]">
                             Tags: {book.tags.join(", ")}
@@ -484,36 +644,55 @@ export function CurrentPage({
                       </View>
                     </View>
                     <Pressable
-                      className="mt-[8px] h-9 items-center justify-center rounded-[8px] bg-[#2E9A98]"
+                      className={`mt-[8px] h-9 items-center justify-center rounded-[8px] ${
+                        alreadyAdded ? "bg-[#A7B4C8]" : "bg-[#2E9A98]"
+                      }`}
                       onPress={async () => {
-                        const enriched = await fetchOpenLibraryBookMetadata(
-                          book.workKey,
-                          book.synopsis,
-                          book.tags,
-                        );
-                        const detailsPayload = JSON.stringify({
-                          source: "open-library",
-                          synopsis: enriched.synopsis,
-                          author: book.author,
-                          tags: enriched.tags,
-                          coverUrl: book.coverUrl,
-                          externalRating: enriched.externalRating,
-                        } satisfies StoredBookDetails);
-                        const ok = await onAddOption(
-                          book.title,
-                          detailsPayload,
-                        );
-                        if (ok) {
-                          setBookSearchError(null);
+                        if (alreadyAdded) return;
+                        setAddingBookId(book.id);
+                        try {
+                          const enriched = await fetchOpenLibraryBookMetadata(
+                            book.workKey,
+                            book.synopsis,
+                            book.tags,
+                          );
+                          const detailsPayload = JSON.stringify({
+                            source: "open-library",
+                            synopsis: enriched.synopsis,
+                            author: book.author,
+                            tags: enriched.tags,
+                            coverUrl: book.coverUrl,
+                            externalRating: enriched.externalRating,
+                          } satisfies StoredBookDetails);
+                          const ok = await onAddOption(
+                            book.title,
+                            detailsPayload,
+                          );
+                          if (ok) {
+                            setBookSearchError(null);
+                          }
+                        } finally {
+                          setAddingBookId(null);
                         }
                       }}
+                      disabled={isAdding || alreadyAdded}
+                      style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
                     >
-                      <Text className="text-[13px] font-bold text-white">
-                        Add Book
-                      </Text>
+                      {isAdding ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : alreadyAdded ? (
+                        <Text className="text-[13px] font-bold text-white">
+                          Already added
+                        </Text>
+                      ) : (
+                        <Text className="text-[13px] font-bold text-white">
+                          Add Book
+                        </Text>
+                      )}
                     </Pressable>
                   </View>
-                ))}
+                  );
+                })}
               </View>
             ) : null}
             <Text className="mb-[10px] mt-1 text-[16px] font-bold text-[#2A3550]">
@@ -546,7 +725,8 @@ export function CurrentPage({
                       </Text>
                       {typeof metadata?.externalRating === "number" ? (
                         <Text className="mt-[1px] text-[13px] text-[#6D7890]">
-                          Open Library rating: {metadata.externalRating.toFixed(1)} / 5
+                          {ratingLabel(metadata.source)} rating:{" "}
+                          {metadata.externalRating.toFixed(1)} / 5
                         </Text>
                       ) : null}
                       {metadata?.tags && metadata.tags.length > 0 ? (
@@ -557,10 +737,23 @@ export function CurrentPage({
                     </View>
                     <Pressable
                       className="ml-[8px] h-9 w-9 items-center justify-center rounded-[9px] bg-[#FEEFF0]"
-                      onPress={() => void onRemoveOption(option.id)}
+                      onPress={async () => {
+                        setRemovingOptionId(option.id);
+                        try {
+                          await onRemoveOption(option.id);
+                        } finally {
+                          setRemovingOptionId(null);
+                        }
+                      }}
                       hitSlop={6}
+                      disabled={removingOptionId === option.id}
+                      style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
                     >
-                      <Trash2 size={16} color="#B42318" strokeWidth={2.4} />
+                      {removingOptionId === option.id ? (
+                        <ActivityIndicator color="#B42318" />
+                      ) : (
+                        <Trash2 size={16} color="#B42318" strokeWidth={2.4} />
+                      )}
                     </Pressable>
                   </View>
                 );
@@ -655,6 +848,7 @@ export function CurrentPage({
             <Pressable
               className="mt-4 h-10 rounded-[10px] bg-[#ECEEF3] px-4 items-center justify-center"
               onPress={() => setIsEditingSubmission(true)}
+              style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
             >
               <Text className="text-[13px] font-bold text-[#273655]">
                 Edit my submission
@@ -694,7 +888,8 @@ export function CurrentPage({
                   </Text>
                   {typeof topOption.externalRating === "number" ? (
                     <Text className="mt-[2px] text-[13px] text-[#6D7890]">
-                      Open Library rating: {topOption.externalRating.toFixed(1)} / 5
+                      {ratingLabel(topOption.source)} rating: {topOption.externalRating.toFixed(1)}{" "}
+                      / 5
                     </Text>
                   ) : null}
                   <Text className="mt-[2px] text-[14px] text-[#5B6780]">
@@ -758,16 +953,26 @@ export function CurrentPage({
                     draftRating > 0 ? "bg-[#2E9A98]" : "bg-[#A7B4C8]"
                   }`}
                   onPress={async () => {
-                    const ok = await onSubmitSessionRating(draftRating);
-                    if (ok) {
-                      setRatingNotice("Rating submitted.");
+                    setSubmittingRating(true);
+                    try {
+                      const ok = await onSubmitSessionRating(draftRating);
+                      if (ok) {
+                        setRatingNotice("Rating submitted.");
+                      }
+                    } finally {
+                      setSubmittingRating(false);
                     }
                   }}
-                  disabled={draftRating <= 0}
+                  disabled={draftRating <= 0 || submittingRating}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
                 >
-                  <Text className="text-[14px] font-bold text-white">
-                    Submit
-                  </Text>
+                  {submittingRating ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text className="text-[14px] font-bold text-white">
+                      Submit
+                    </Text>
+                  )}
                 </Pressable>
                 {ratingNotice ? (
                   <Text className="mt-2 text-[13px] text-[#177245]">
@@ -880,6 +1085,19 @@ function starFill(rating: number, starNumber: number) {
   if (diff >= 1) return 1;
   if (diff >= 0.5) return 0.5;
   return 0;
+}
+
+function normalizeBookKey(title: string, author: string) {
+  const normalizedTitle = title.trim().toLowerCase();
+  const normalizedAuthor = author.trim().toLowerCase();
+  return `${normalizedTitle}::${normalizedAuthor}`;
+}
+
+function ratingLabel(source: StoredBookDetails["source"] | null | undefined) {
+  if (source === "manual") {
+    return "Manual";
+  }
+  return "Open Library";
 }
 
 function parseStoredBookDetails( //redeployed
