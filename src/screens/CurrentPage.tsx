@@ -54,9 +54,11 @@ type StoredBookDetails = {
   author?: string;
   tags?: string[];
   coverUrl?: string | null;
+  externalRating?: number | null;
 };
 type BookSearchResult = {
   id: string;
+  workKey: string | null;
   title: string;
   author: string;
   synopsis: string;
@@ -195,6 +197,7 @@ export function CurrentPage({
       details: metadata?.synopsis ?? found?.details ?? "",
       author: metadata?.author ?? null,
       coverUrl: metadata?.coverUrl ?? null,
+      externalRating: metadata?.externalRating ?? null,
       score: typeof first.score === "number" ? first.score : null,
     };
   }, [currentSession, options]);
@@ -276,6 +279,7 @@ export function CurrentPage({
             id:
               doc.key ??
               `${doc.title ?? "book"}-${Math.random().toString(36).slice(2, 8)}`,
+            workKey: doc.key ?? null,
             title: doc.title?.trim() || "Untitled",
             author: (doc.author_name ?? []).join(", ") || "Unknown author",
             synopsis: synopsis || "No synopsis available.",
@@ -298,6 +302,65 @@ export function CurrentPage({
     } finally {
       setSearchingBooks(false);
     }
+  };
+
+  const fetchOpenLibraryBookMetadata = async (
+    workKey: string | null,
+    fallbackSynopsis: string,
+    fallbackTags: string[],
+  ) => {
+    if (!workKey) {
+      return {
+        synopsis: fallbackSynopsis,
+        tags: fallbackTags,
+        externalRating: null as number | null,
+      };
+    }
+
+    let synopsis = fallbackSynopsis;
+    let tags = fallbackTags;
+    let externalRating: number | null = null;
+
+    try {
+      const workResponse = await fetch(`https://openlibrary.org${workKey}.json`);
+      if (workResponse.ok) {
+        const workPayload = (await workResponse.json()) as {
+          description?: string | { value?: string };
+          subjects?: string[];
+        };
+        const description = extractOpenLibraryDescription(workPayload.description);
+        if (description) {
+          synopsis = description;
+        }
+        if (Array.isArray(workPayload.subjects) && workPayload.subjects.length > 0) {
+          tags = workPayload.subjects.slice(0, 8);
+        }
+      }
+    } catch {
+      // Keep fallback metadata if details fetch fails.
+    }
+
+    try {
+      const ratingsResponse = await fetch(`https://openlibrary.org${workKey}/ratings.json`);
+      if (ratingsResponse.ok) {
+        const ratingsPayload = (await ratingsResponse.json()) as {
+          summary?: { average?: number };
+          average?: number;
+          rating?: { average?: number };
+        };
+        const average =
+          ratingsPayload.summary?.average ??
+          ratingsPayload.average ??
+          ratingsPayload.rating?.average;
+        if (typeof average === "number" && Number.isFinite(average)) {
+          externalRating = Math.round(average * 10) / 10;
+        }
+      }
+    } catch {
+      // Keep null rating if ratings endpoint fails.
+    }
+
+    return { synopsis, tags, externalRating };
   };
 
   const moveOption = (index: number, direction: -1 | 1) => {
@@ -423,12 +486,18 @@ export function CurrentPage({
                     <Pressable
                       className="mt-[8px] h-9 items-center justify-center rounded-[8px] bg-[#2E9A98]"
                       onPress={async () => {
+                        const enriched = await fetchOpenLibraryBookMetadata(
+                          book.workKey,
+                          book.synopsis,
+                          book.tags,
+                        );
                         const detailsPayload = JSON.stringify({
                           source: "open-library",
-                          synopsis: book.synopsis,
+                          synopsis: enriched.synopsis,
                           author: book.author,
-                          tags: book.tags,
+                          tags: enriched.tags,
                           coverUrl: book.coverUrl,
+                          externalRating: enriched.externalRating,
                         } satisfies StoredBookDetails);
                         const ok = await onAddOption(
                           book.title,
@@ -475,6 +544,11 @@ export function CurrentPage({
                       <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
                         {metadata?.author ?? "Unknown author"}
                       </Text>
+                      {typeof metadata?.externalRating === "number" ? (
+                        <Text className="mt-[1px] text-[13px] text-[#6D7890]">
+                          Open Library rating: {metadata.externalRating.toFixed(1)} / 5
+                        </Text>
+                      ) : null}
                       {metadata?.tags && metadata.tags.length > 0 ? (
                         <Text className="mt-[1px] text-[13px] text-[#6D7890]">
                           Tags: {metadata.tags.join(", ")}
@@ -618,6 +692,11 @@ export function CurrentPage({
                   <Text className="mt-[2px] text-[15px] text-[#4D5A71]">
                     {topOption.author || "Unknown author"}
                   </Text>
+                  {typeof topOption.externalRating === "number" ? (
+                    <Text className="mt-[2px] text-[13px] text-[#6D7890]">
+                      Open Library rating: {topOption.externalRating.toFixed(1)} / 5
+                    </Text>
+                  ) : null}
                   <Text className="mt-[2px] text-[14px] text-[#5B6780]">
                     {topOption.details || "Top result"}
                   </Text>
@@ -835,4 +914,14 @@ function extractOpenLibraryFirstSentence(
     return first?.value?.trim() ?? "";
   }
   return firstSentence.value?.trim() ?? "";
+}
+
+function extractOpenLibraryDescription(
+  description: string | { value?: string } | undefined,
+) {
+  if (!description) return "";
+  if (typeof description === "string") {
+    return description.trim();
+  }
+  return description.value?.trim() ?? "";
 }
