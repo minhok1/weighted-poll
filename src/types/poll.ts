@@ -33,6 +33,11 @@ export type GroupRow = {
   invite_code: string;
   created_at?: string;
   member_count?: number;
+  base_weight: number;
+  rating_split: number;
+  rating_lookback: number;
+  first_pick_lookback: number;
+  my_weight?: number;
 };
 
 export type FinalRankingEntry = {

@@ -68,6 +68,7 @@ function AppContent() {
             onCreateGroup={poll.createGroup}
             onJoinGroup={poll.joinGroup}
             onSelectGroup={poll.selectActiveGroup}
+            onUpdateGroupSettings={poll.updateGroupSettings}
             loading={poll.loading}
           />
         ) : null}

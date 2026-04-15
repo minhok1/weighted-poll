@@ -42,6 +42,10 @@ type UsePollDataResult = {
   createGroup: (groupName: string) => Promise<boolean>;
   joinGroup: (inviteCode: string) => Promise<boolean>;
   selectActiveGroup: (groupId: string) => void;
+  updateGroupSettings: (
+    groupId: string,
+    settings: { baseWeight: number; ratingSplit: number; ratingLookback: number; firstPickLookback: number }
+  ) => Promise<boolean>;
   createSession: (input: CreateSessionInput) => Promise<boolean>;
   addOption: (input: AddOptionInput) => Promise<boolean>;
   removeOption: (optionId: string) => Promise<boolean>;
@@ -179,14 +183,20 @@ export function usePollData(): UsePollDataResult {
         if (groupIds.length > 0) {
           const groupsResult = await supabase
             .from('groups')
-            .select('id, name, invite_code, created_at')
+            .select('id, name, invite_code, created_at, base_weight, rating_split, rating_lookback, first_pick_lookback')
             .in('id', groupIds)
             .order('created_at', { ascending: true });
           if (!groupsResult.error) {
-            const membershipsForGroupsResult = await supabase
-              .from('group_members')
-              .select('group_id')
-              .in('group_id', groupIds);
+            const [membershipsForGroupsResult, myWeightsResult] = await Promise.all([
+              supabase.from('group_members').select('group_id').in('group_id', groupIds),
+              currentUserId
+                ? supabase
+                    .from('group_members')
+                    .select('group_id, weight')
+                    .eq('user_id', currentUserId)
+                    .in('group_id', groupIds)
+                : Promise.resolve({ data: [], error: null }),
+            ]);
 
             const countsByGroupId = new Map<string, number>();
             if (!membershipsForGroupsResult.error) {
@@ -196,9 +206,18 @@ export function usePollData(): UsePollDataResult {
               }
             }
 
+            const myWeightsMap = new Map<string, number>(
+              (myWeightsResult.data ?? []).map((r) => [r.group_id as string, r.weight as number])
+            );
+
             const groupsWithCounts = ((groupsResult.data ?? []) as GroupRow[]).map((group) => ({
               ...group,
+              base_weight: (group.base_weight as unknown as number) ?? 0.6,
+              rating_split: (group.rating_split as unknown as number) ?? 0.8,
+              rating_lookback: (group.rating_lookback as unknown as number) ?? 2,
+              first_pick_lookback: (group.first_pick_lookback as unknown as number) ?? 2,
               member_count: countsByGroupId.get(group.id) ?? 0,
+              my_weight: myWeightsMap.get(group.id),
             }));
             setGroups(groupsWithCounts);
           } else {
@@ -755,23 +774,9 @@ export function usePollData(): UsePollDataResult {
 
       let payload: { phase: SessionPhase; final_ranking?: FinalRankingEntry[] } = { phase };
       if (phase === 'results') {
-        const [optionsResult, submissionsResult, pastSessionsResult] = await Promise.all([
-          supabase
-            .from('session_options')
-            .select('id, title')
-            .eq('session_id', currentSession.id),
-          supabase
-            .from('session_submissions')
-            .select('user_id, ranking')
-            .eq('session_id', currentSession.id),
-          supabase
-            .from('sessions')
-            .select('id, final_ranking, created_at')
-            .eq('group_id', currentSession.group_id)
-            .eq('phase', 'closed')
-            .neq('id', currentSession.id)
-            .order('created_at', { ascending: false })
-            .limit(2),
+        const [optionsResult, submissionsResult] = await Promise.all([
+          supabase.from('session_options').select('id, title').eq('session_id', currentSession.id),
+          supabase.from('session_submissions').select('user_id, ranking').eq('session_id', currentSession.id),
         ]);
 
         if (optionsResult.error) {
@@ -782,44 +787,27 @@ export function usePollData(): UsePollDataResult {
           setError(submissionsResult.error.message);
           return false;
         }
-        if (pastSessionsResult.error) {
-          setError(pastSessionsResult.error.message);
-          return false;
-        }
 
         const currentOptions = (optionsResult.data ?? []) as Array<{ id: string; title: string }>;
         const currentSubmissions = (submissionsResult.data ?? []) as Array<{
           user_id: string;
           ranking: unknown;
         }>;
-        const pastSessions = (pastSessionsResult.data ?? []) as Array<{
-          id: string;
-          final_ranking: unknown;
-        }>;
 
-        let pastSubmissions: Array<{ session_id: string; user_id: string; ranking: unknown }> = [];
-        if (pastSessions.length > 0) {
-          const pastSubmissionsResult = await supabase
-            .from('session_submissions')
-            .select('session_id, user_id, ranking')
-            .in(
-              'session_id',
-              pastSessions.map((session) => session.id)
-            );
-          if (pastSubmissionsResult.error) {
-            setError(pastSubmissionsResult.error.message);
-            return false;
+        const participantIds = Array.from(new Set(currentSubmissions.map((s) => s.user_id)));
+        const storedWeights = new Map<string, number>();
+        if (participantIds.length > 0) {
+          const weightsResult = await supabase
+            .from('group_members')
+            .select('user_id, weight')
+            .eq('group_id', currentSession.group_id)
+            .in('user_id', participantIds);
+          for (const row of weightsResult.data ?? []) {
+            storedWeights.set(row.user_id as string, (row.weight as number) ?? 0.8);
           }
-          pastSubmissions = (pastSubmissionsResult.data ?? []) as Array<{
-            session_id: string;
-            user_id: string;
-            ranking: unknown;
-          }>;
         }
 
-        const participantIds = Array.from(new Set(currentSubmissions.map((submission) => submission.user_id)));
-        const historyScores = computeHistoryScores(participantIds, pastSessions, pastSubmissions);
-        const finalRanking = buildWeightedFinalRanking(currentOptions, currentSubmissions, historyScores);
+        const finalRanking = buildWeightedFinalRanking(currentOptions, currentSubmissions, storedWeights);
         payload = {
           phase,
           final_ranking: finalRanking,
@@ -830,6 +818,10 @@ export function usePollData(): UsePollDataResult {
       if (result.error) {
         setError(result.error.message);
         return false;
+      }
+
+      if (phase === 'closed') {
+        await recomputeGroupWeights(currentSession.group_id);
       }
 
       await refresh();
@@ -873,6 +865,39 @@ export function usePollData(): UsePollDataResult {
       return true;
     },
     [currentSession, refresh, userId]
+  );
+
+  const updateGroupSettings = useCallback(
+    async (
+      groupId: string,
+      settings: { baseWeight: number; ratingSplit: number; ratingLookback: number; firstPickLookback: number }
+    ) => {
+      setErrorScope('groups');
+      if (!supabase) {
+        setError('Supabase is not configured.');
+        return false;
+      }
+
+      const result = await supabase
+        .from('groups')
+        .update({
+          base_weight: settings.baseWeight,
+          rating_split: settings.ratingSplit,
+          rating_lookback: settings.ratingLookback,
+          first_pick_lookback: settings.firstPickLookback,
+        })
+        .eq('id', groupId);
+
+      if (result.error) {
+        setError(result.error.message);
+        return false;
+      }
+
+      await recomputeGroupWeights(groupId);
+      await refresh();
+      return true;
+    },
+    [refresh]
   );
 
   const submitSessionRating = useCallback(
@@ -938,6 +963,7 @@ export function usePollData(): UsePollDataResult {
     createGroup,
     joinGroup,
     selectActiveGroup,
+    updateGroupSettings,
     createSession,
     addOption,
     removeOption,
@@ -951,7 +977,7 @@ export function usePollData(): UsePollDataResult {
 function buildWeightedFinalRanking(
   options: Array<{ id: string; title: string }>,
   submissions: Array<{ user_id: string; ranking: unknown }>,
-  historyScores: Map<string, { enjoyment: number; reflection: number }>
+  storedWeights: Map<string, number>
 ): FinalRankingEntry[] {
   if (options.length === 0) {
     return [];
@@ -970,10 +996,7 @@ function buildWeightedFinalRanking(
       continue;
     }
     const positions = buildPositionMap(rankingEntries, optionIds);
-    const history = historyScores.get(submission.user_id);
-    const enjoyment = history?.enjoyment ?? 0.5;
-    const reflection = history?.reflection ?? 0.5;
-    const voterWeight = 0.6 + 0.2 * enjoyment + 0.2 * reflection;
+    const voterWeight = storedWeights.get(submission.user_id) ?? 0.8;
 
     for (let i = 0; i < optionIds.length; i += 1) {
       for (let j = i + 1; j < optionIds.length; j += 1) {
@@ -1008,62 +1031,113 @@ function buildWeightedFinalRanking(
   }));
 }
 
-function computeHistoryScores(
-  userIds: string[],
-  pastSessions: Array<{ id: string; final_ranking: unknown }>,
-  pastSubmissions: Array<{ session_id: string; user_id: string; ranking: unknown }>
-): Map<string, { enjoyment: number; reflection: number }> {
-  const submissionsBySession = new Map<string, Array<{ user_id: string; ranking: unknown }>>();
-  for (const submission of pastSubmissions) {
-    if (!submissionsBySession.has(submission.session_id)) {
-      submissionsBySession.set(submission.session_id, []);
+async function recomputeGroupWeights(groupId: string): Promise<void> {
+  if (!supabase) return;
+
+  const groupResult = await supabase
+    .from('groups')
+    .select('base_weight, rating_split, rating_lookback, first_pick_lookback')
+    .eq('id', groupId)
+    .maybeSingle();
+  if (groupResult.error || !groupResult.data) return;
+
+  const bw: number = (groupResult.data.base_weight as number) ?? 0.6;
+  const rs: number = (groupResult.data.rating_split as number) ?? 0.8;
+  const rl: number = (groupResult.data.rating_lookback as number) ?? 2;
+  const fpl: number = (groupResult.data.first_pick_lookback as number) ?? 2;
+  const maxLookback = Math.max(rl, fpl);
+
+  const membersResult = await supabase.from('group_members').select('user_id').eq('group_id', groupId);
+  if (membersResult.error) return;
+  const memberIds = (membersResult.data ?? []).map((m) => m.user_id as string);
+  if (memberIds.length === 0) return;
+
+  const sessionsResult = await supabase
+    .from('sessions')
+    .select('id, final_ranking')
+    .eq('group_id', groupId)
+    .eq('phase', 'closed')
+    .order('created_at', { ascending: false })
+    .limit(maxLookback);
+  if (sessionsResult.error) return;
+  const pastSessions = (sessionsResult.data ?? []) as Array<{ id: string; final_ranking: unknown }>;
+
+  const defaultWeight = Math.round((bw + (rs - bw) * 0.5 + (1 - rs) * 0.5) * 100) / 100;
+
+  if (pastSessions.length === 0) {
+    for (const userId of memberIds) {
+      await supabase
+        .from('group_members')
+        .update({ weight: defaultWeight })
+        .eq('group_id', groupId)
+        .eq('user_id', userId);
     }
-    submissionsBySession.get(submission.session_id)?.push({ user_id: submission.user_id, ranking: submission.ranking });
+    return;
   }
 
-  const scores = new Map<string, { enjoymentSamples: number[]; reflectionSamples: number[] }>();
-  for (const userId of userIds) {
-    scores.set(userId, { enjoymentSamples: [], reflectionSamples: [] });
-  }
+  const sessionIds = pastSessions.map((s) => s.id);
+  const [submissionsResult, ratingsResult] = await Promise.all([
+    supabase
+      .from('session_submissions')
+      .select('session_id, user_id, ranking')
+      .in('session_id', sessionIds),
+    supabase
+      .from('session_ratings')
+      .select('session_id, user_id, rating')
+      .in('session_id', sessionIds),
+  ]);
+  if (submissionsResult.error || ratingsResult.error) return;
 
-  for (const session of pastSessions) {
-    const finalOrder = parseFinalRankingOrder(session.final_ranking);
-    if (finalOrder.length === 0) {
-      continue;
-    }
-    const winner = finalOrder[0];
-    const submissions = submissionsBySession.get(session.id) ?? [];
-    for (const submission of submissions) {
-      if (!scores.has(submission.user_id)) {
-        continue;
-      }
-      const parsed = parseRankingEntries(submission.ranking);
-      if (parsed.length === 0) {
-        continue;
-      }
-      const userTop = [...parsed].sort((a, b) => a.position - b.position)[0]?.option_id;
-      if (userTop) {
-        scores.get(submission.user_id)?.enjoymentSamples.push(userTop === winner ? 1 : 0);
-      }
-      const userOrder = parsed
-        .sort((a, b) => a.position - b.position)
-        .map((entry) => entry.option_id);
-      const reflection = kendallAgreement(finalOrder, userOrder);
-      if (reflection !== null) {
-        scores.get(submission.user_id)?.reflectionSamples.push(reflection);
-      }
-    }
-  }
+  const submissions = (submissionsResult.data ?? []) as Array<{
+    session_id: string;
+    user_id: string;
+    ranking: unknown;
+  }>;
+  const ratings = (ratingsResult.data ?? []) as Array<{
+    session_id: string;
+    user_id: string;
+    rating: number;
+  }>;
 
-  const output = new Map<string, { enjoyment: number; reflection: number }>();
-  for (const userId of userIds) {
-    const userScore = scores.get(userId);
-    output.set(userId, {
-      enjoyment: average(userScore?.enjoymentSamples) ?? 0.5,
-      reflection: average(userScore?.reflectionSamples) ?? 0.5,
-    });
+  for (const userId of memberIds) {
+    const ratingSessions = pastSessions.slice(0, rl);
+    const ratingSessionIds = new Set(ratingSessions.map((s) => s.id));
+    const userRatings = ratings.filter(
+      (r) => r.user_id === userId && ratingSessionIds.has(r.session_id)
+    );
+    const avgRating =
+      userRatings.length > 0
+        ? userRatings.reduce((sum, r) => sum + (r.rating - 0.5) / 4.5, 0) / userRatings.length
+        : 0.5;
+
+    const firstPickSessions = pastSessions.slice(0, fpl);
+    const firstPickSamples: number[] = [];
+    for (const session of firstPickSessions) {
+      const finalOrder = parseFinalRankingOrder(session.final_ranking);
+      const winner = finalOrder[0];
+      if (!winner) continue;
+      const userSubmission = submissions.find(
+        (s) => s.session_id === session.id && s.user_id === userId
+      );
+      if (!userSubmission) continue;
+      const entries = parseRankingEntries(userSubmission.ranking);
+      const userTop = [...entries].sort((a, b) => a.position - b.position)[0]?.option_id;
+      if (userTop !== undefined) {
+        firstPickSamples.push(userTop === winner ? 1 : 0);
+      }
+    }
+    const firstPickRate =
+      firstPickSamples.length > 0
+        ? firstPickSamples.reduce((a, b) => a + b, 0) / firstPickSamples.length
+        : 0.5;
+
+    const weight = Math.round((bw + (rs - bw) * avgRating + (1 - rs) * firstPickRate) * 100) / 100;
+    await supabase
+      .from('group_members')
+      .update({ weight })
+      .eq('group_id', groupId)
+      .eq('user_id', userId);
   }
-  return output;
 }
 
 function parseRankingEntries(value: unknown): RankingEntry[] {
@@ -1165,30 +1239,6 @@ function maximizeKemenyOrdering(optionIds: string[], pairwise: Map<string, Map<s
   return bestOrder;
 }
 
-function kendallAgreement(finalOrder: string[], userOrder: string[]) {
-  const common = finalOrder.filter((optionId) => userOrder.includes(optionId));
-  if (common.length < 2) {
-    return null;
-  }
-  const userPosition = new Map<string, number>();
-  userOrder.forEach((optionId, index) => userPosition.set(optionId, index));
-  let agreements = 0;
-  let total = 0;
-  for (let i = 0; i < common.length; i += 1) {
-    for (let j = i + 1; j < common.length; j += 1) {
-      const a = common[i];
-      const b = common[j];
-      total += 1;
-      if ((userPosition.get(a) ?? 0) < (userPosition.get(b) ?? 0)) {
-        agreements += 1;
-      }
-    }
-  }
-  if (total === 0) {
-    return null;
-  }
-  return agreements / total;
-}
 
 function average(values: number[] | undefined) {
   if (!values || values.length === 0) {
