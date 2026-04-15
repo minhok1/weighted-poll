@@ -209,9 +209,10 @@ function WeightSlider({
       {tooltip === 'rating' ? (
         <View style={{ marginTop: 8, backgroundColor: '#E8F8F7', borderRadius: 8, padding: 10, borderLeftWidth: 3, borderLeftColor: '#2E9A98' }}>
           <Text style={{ fontSize: 12, color: '#2A3550', lineHeight: 18 }}>
-            <Text style={{ fontWeight: '700' }}>Average rating</Text> rewards members who
-            consistently rate sessions highly. It is calculated from each member's own post-session
-            star ratings over the last N sessions.
+            <Text style={{ fontWeight: '700' }}>Average rating</Text> rewards members who gave
+            lower ratings to recent sessions — indicating they weren't satisfied with the outcome,
+            so they earn more influence in future votes. It is calculated from each member's own
+            post-session star ratings over the last N sessions.
           </Text>
         </View>
       ) : null}
@@ -219,8 +220,10 @@ function WeightSlider({
         <View style={{ marginTop: 8, backgroundColor: '#E0F2EE', borderRadius: 8, padding: 10, borderLeftWidth: 3, borderLeftColor: '#00897B' }}>
           <Text style={{ fontSize: 12, color: '#2A3550', lineHeight: 18 }}>
             <Text style={{ fontWeight: '700' }}>Preferred chosen</Text> rewards members whose
-            top-ranked pick ended up being the group's winner. It is calculated as the fraction of
-            past sessions where the member's first choice matched the final result.
+            top-ranked pick did <Text style={{ fontStyle: 'italic' }}>not</Text> end up being the
+            group's winner. Members who didn't get their preferred outcome earn more influence in
+            future votes. It is calculated as the fraction of past sessions where the member's
+            first choice did not match the final result.
           </Text>
         </View>
       ) : null}

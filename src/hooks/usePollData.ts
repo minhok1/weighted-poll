@@ -1131,7 +1131,7 @@ async function recomputeGroupWeights(groupId: string): Promise<void> {
         ? firstPickSamples.reduce((a, b) => a + b, 0) / firstPickSamples.length
         : 0.5;
 
-    const weight = Math.round((bw + (rs - bw) * avgRating + (1 - rs) * firstPickRate) * 100) / 100;
+    const weight = Math.round((bw + (rs - bw) * (1 - avgRating) + (1 - rs) * (1 - firstPickRate)) * 100) / 100;
     await supabase
       .from('group_members')
       .update({ weight })
