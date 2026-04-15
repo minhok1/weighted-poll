@@ -8,6 +8,7 @@ import {
   ScrollView,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import type { GroupRow } from '../types/poll';
@@ -46,6 +47,13 @@ function WeightSlider({
 
   const [trackWidth, setTrackWidth] = useState(0);
   const [tooltip, setTooltip] = useState<'base' | 'rating' | 'pick' | null>(null);
+  const { width: screenWidth } = useWindowDimensions();
+  const narrow = screenWidth < 380;
+  const labelSize = narrow ? 9 : 11;
+  const valueSize = narrow ? 11 : 12;
+  const infoSize = narrow ? 9 : 11;
+  const tooltipSize = narrow ? 11 : 12;
+  const tooltipLineHeight = narrow ? 16 : 18;
 
   const measureTrack = useCallback(() => {
     trackRef.current?.measure((_x, _y, w, _h, pageX) => {
@@ -161,24 +169,24 @@ function WeightSlider({
           onPress={() => setTooltip((t) => (t === 'base' ? null : 'base'))}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-            <Text style={{ fontSize: 11, color: '#546E7A', fontWeight: '700', letterSpacing: 0.4 }}>
+            <Text style={{ fontSize: labelSize, color: '#546E7A', fontWeight: '700', letterSpacing: 0.4 }}>
               BASE
             </Text>
-            <Info size={11} color="#90A4AE" strokeWidth={2.5} />
+            <Info size={infoSize} color="#90A4AE" strokeWidth={2.5} />
           </View>
-          <Text style={{ fontSize: 12, color: '#546E7A' }}>{(base * 100).toFixed(0)}%</Text>
+          <Text style={{ fontSize: valueSize, color: '#546E7A' }}>{(base * 100).toFixed(0)}%</Text>
         </Pressable>
         <Pressable
           style={{ flex: 1, alignItems: 'center' }}
           onPress={() => setTooltip((t) => (t === 'rating' ? null : 'rating'))}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-            <Text style={{ fontSize: 11, color: '#2E9A98', fontWeight: '700', letterSpacing: 0.4 }}>
-              AVERAGE RATING
+            <Text style={{ fontSize: labelSize, color: '#2E9A98', fontWeight: '700', letterSpacing: 0.4 }}>
+              {narrow ? 'AVG RATING' : 'AVERAGE RATING'}
             </Text>
-            <Info size={11} color="#4DB6AC" strokeWidth={2.5} />
+            <Info size={infoSize} color="#4DB6AC" strokeWidth={2.5} />
           </View>
-          <Text style={{ fontSize: 12, color: '#2E9A98' }}>
+          <Text style={{ fontSize: valueSize, color: '#2E9A98' }}>
             {((split - base) * 100).toFixed(0)}%
           </Text>
         </Pressable>
@@ -187,19 +195,19 @@ function WeightSlider({
           onPress={() => setTooltip((t) => (t === 'pick' ? null : 'pick'))}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-            <Text style={{ fontSize: 11, color: '#004D40', fontWeight: '700', letterSpacing: 0.4 }}>
-              PREFERRED CHOSEN
+            <Text style={{ fontSize: labelSize, color: '#004D40', fontWeight: '700', letterSpacing: 0.4 }}>
+              {narrow ? 'PREF. CHOSEN' : 'PREFERRED CHOSEN'}
             </Text>
-            <Info size={11} color="#2E7D6A" strokeWidth={2.5} />
+            <Info size={infoSize} color="#2E7D6A" strokeWidth={2.5} />
           </View>
-          <Text style={{ fontSize: 12, color: '#004D40' }}>{((1 - split) * 100).toFixed(0)}%</Text>
+          <Text style={{ fontSize: valueSize, color: '#004D40' }}>{((1 - split) * 100).toFixed(0)}%</Text>
         </Pressable>
       </View>
 
       {/* Inline tooltip */}
       {tooltip === 'base' ? (
         <View style={{ marginTop: 8, backgroundColor: '#EEF3F7', borderRadius: 8, padding: 10, borderLeftWidth: 3, borderLeftColor: '#546E7A' }}>
-          <Text style={{ fontSize: 12, color: '#2A3550', lineHeight: 18 }}>
+          <Text style={{ fontSize: tooltipSize, color: '#2A3550', lineHeight: tooltipLineHeight }}>
             <Text style={{ fontWeight: '700' }}>Base weight</Text> is the minimum voting power
             every member receives, regardless of their past session history. Everyone is guaranteed
             at least this share of influence.
@@ -208,7 +216,7 @@ function WeightSlider({
       ) : null}
       {tooltip === 'rating' ? (
         <View style={{ marginTop: 8, backgroundColor: '#E8F8F7', borderRadius: 8, padding: 10, borderLeftWidth: 3, borderLeftColor: '#2E9A98' }}>
-          <Text style={{ fontSize: 12, color: '#2A3550', lineHeight: 18 }}>
+          <Text style={{ fontSize: tooltipSize, color: '#2A3550', lineHeight: tooltipLineHeight }}>
             <Text style={{ fontWeight: '700' }}>Average rating</Text> rewards members who gave
             lower ratings to recent sessions — indicating they weren't satisfied with the outcome,
             so they earn more influence in future votes. It is calculated from each member's own
@@ -218,7 +226,7 @@ function WeightSlider({
       ) : null}
       {tooltip === 'pick' ? (
         <View style={{ marginTop: 8, backgroundColor: '#E0F2EE', borderRadius: 8, padding: 10, borderLeftWidth: 3, borderLeftColor: '#00897B' }}>
-          <Text style={{ fontSize: 12, color: '#2A3550', lineHeight: 18 }}>
+          <Text style={{ fontSize: tooltipSize, color: '#2A3550', lineHeight: tooltipLineHeight }}>
             <Text style={{ fontWeight: '700' }}>Preferred chosen</Text> rewards members whose
             top-ranked pick did <Text style={{ fontStyle: 'italic' }}>not</Text> end up being the
             group's winner. Members who didn't get their preferred outcome earn more influence in
@@ -246,6 +254,7 @@ export function GroupsPage({
   const [copiedGroupId, setCopiedGroupId] = useState<string | null>(null);
 
   const [settingsGroupId, setSettingsGroupId] = useState<string | null>(null);
+  const [settingsOpeningId, setSettingsOpeningId] = useState<string | null>(null);
   const [draftBase, setDraftBase] = useState(0.6);
   const [draftSplit, setDraftSplit] = useState(0.8);
   const [draftRatingLookback, setDraftRatingLookback] = useState(2);
@@ -259,11 +268,15 @@ export function GroupsPage({
 
   const openSettings = useCallback(
     (group: GroupRow) => {
-      setSettingsGroupId(group.id);
-      setDraftBase(group.base_weight ?? 0.6);
-      setDraftSplit(group.rating_split ?? 0.8);
-      setDraftRatingLookback(group.rating_lookback ?? 2);
-      setDraftFirstPickLookback(group.first_pick_lookback ?? 2);
+      setSettingsOpeningId(group.id);
+      setTimeout(() => {
+        setDraftBase(group.base_weight ?? 0.6);
+        setDraftSplit(group.rating_split ?? 0.8);
+        setDraftRatingLookback(group.rating_lookback ?? 2);
+        setDraftFirstPickLookback(group.first_pick_lookback ?? 2);
+        setSettingsGroupId(group.id);
+        setSettingsOpeningId(null);
+      }, 0);
     },
     []
   );
@@ -379,10 +392,10 @@ export function GroupsPage({
             >
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 15, color: '#111D35', fontWeight: '500' }}>
-                  Avg rating lookback
+                  Average rating lookback
                 </Text>
                 <Text style={{ fontSize: 13, color: '#6D7890', marginTop: 2 }}>
-                  Past sessions for avg rating
+                  Past sessions for average rating
                 </Text>
               </View>
               <TextInput
@@ -585,7 +598,7 @@ export function GroupsPage({
                       paddingHorizontal: 10,
                       paddingVertical: 6,
                       borderRadius: 8,
-                      backgroundColor: isActive ? '#F0FFFE' : '#FAFBFC',
+                      backgroundColor: '#FFFFFF',
                       borderWidth: 1,
                       borderColor: isActive ? '#C8EDEB' : '#E7ECF2',
                     }}
@@ -593,8 +606,13 @@ export function GroupsPage({
                       e.stopPropagation();
                       openSettings(group);
                     }}
+                    disabled={settingsOpeningId === group.id}
                   >
-                    <Settings size={14} color={isActive ? '#1F6E6C' : '#4D5A71'} strokeWidth={2} />
+                    {settingsOpeningId === group.id ? (
+                      <ActivityIndicator size={14} color={isActive ? '#1F6E6C' : '#4D5A71'} />
+                    ) : (
+                      <Settings size={14} color={isActive ? '#1F6E6C' : '#4D5A71'} strokeWidth={2} />
+                    )}
                     <Text style={{ fontSize: 13, fontWeight: '600', color: isActive ? '#1F6E6C' : '#4D5A71' }}>
                       Settings
                     </Text>
